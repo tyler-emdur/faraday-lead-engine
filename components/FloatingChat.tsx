@@ -9,7 +9,7 @@ export default function FloatingChat() {
   const [open, setOpen] = useState(false);
   const [pulse, setPulse] = useState(false);
   const [dismissed, setDismissed] = useState(false);
-  const pulseTimerRef = useRef<NodeJS.Timeout>();
+  const pulseTimerRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
   useEffect(() => {
     // Don't re-pulse if they've already engaged this session
