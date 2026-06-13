@@ -179,8 +179,10 @@ export async function POST(req: NextRequest) {
 
     const completion = await client.chat.completions.create({
       model,
-      max_tokens: 400,
+      max_tokens: 800,
       temperature: 0.7,
+      // response_format forces JSON output on models that support it (prevents markdown fencing)
+      response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemContent },
         ...messages,
