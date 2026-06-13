@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import UtmCapture from "@/components/UtmCapture";
 
 const site = process.env.NEXT_PUBLIC_SITE_URL || "https://faradaysun.com";
 
@@ -49,7 +50,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className="bg-gray-950 text-gray-100 antialiased">{children}</body>
+      <body className="bg-gray-950 text-gray-100 antialiased">
+        <UtmCapture />
+        {children}
+      </body>
     </html>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { getUtm, utmToSource, utmToSourceDetail } from "@/lib/utm";
 
 const DISMISSED_KEY = "faraday_exit_dismissed";
 
@@ -57,7 +58,8 @@ export default function ExitIntentPopup() {
           phone: phone || undefined,
           service: "hail_damage",
           urgency: "immediate",
-          source: "exit_intent",
+          source: utmToSource(getUtm()) || "exit_intent",
+          source_detail: utmToSourceDetail(getUtm()),
         }),
       });
     } catch {}

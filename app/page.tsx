@@ -3,6 +3,8 @@ import ExitIntentPopup from "@/components/ExitIntentPopup";
 import QuickCaptureForm from "@/components/QuickCaptureForm";
 import FloatingChat from "@/components/FloatingChat";
 import StormBanner from "@/components/StormBanner";
+import InsuranceEstimator from "@/components/InsuranceEstimator";
+import ActivityTicker from "@/components/ActivityTicker";
 
 const REVIEWS = [
   {
@@ -142,7 +144,7 @@ export default function HomePage() {
             </p>
 
             {/* Trust pills */}
-            <div className="flex flex-wrap gap-2 mb-6">
+            <div className="flex flex-wrap gap-2 mb-4">
               {TRUST.map((t) => (
                 <span
                   key={t}
@@ -152,6 +154,11 @@ export default function HomePage() {
                   {t}
                 </span>
               ))}
+            </div>
+
+            {/* Live activity ticker */}
+            <div className="mb-6">
+              <ActivityTicker />
             </div>
 
             <p className="text-gray-600 text-sm">
@@ -250,6 +257,26 @@ export default function HomePage() {
             </svg>
           </a>
           <p className="text-gray-600 text-xs mt-3">No cost · No commitment · We come to you</p>
+        </div>
+      </section>
+
+      {/* ─── INSURANCE ESTIMATOR ─── */}
+      {/* Personalized dollar amount = highest conversion tool on the page */}
+      <section className="border-t border-gray-800/60 bg-gray-950" id="estimate">
+        <div className="max-w-6xl mx-auto px-4 py-14">
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 rounded-full px-3 py-1.5 text-amber-400 text-xs font-semibold mb-4">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              Free Insurance Estimate — 30 Seconds
+            </div>
+            <h2 className="text-2xl md:text-3xl font-black text-white mb-3">
+              How Much Is Your Roof Damage Worth?
+            </h2>
+            <p className="text-gray-400 text-sm max-w-sm mx-auto">
+              Answer 4 quick questions. We'll show you an estimated insurance payout based on real Colorado claims.
+            </p>
+          </div>
+          <InsuranceEstimator />
         </div>
       </section>
 

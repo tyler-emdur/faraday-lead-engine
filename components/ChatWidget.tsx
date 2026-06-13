@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { getUtm, utmToSource, utmToSourceDetail } from "@/lib/utm";
 
 interface Message {
   role: "user" | "assistant";
@@ -39,8 +40,26 @@ function scoreLead(d: LeadData): number {
   else if (d.service === "windows") s += 18;
   if (d.homeowner === true) s += 12;
   if (d.damage_visible === true) s += 12;
+  if (d.damage_description) {
+    const desc = d.damage_description.toLowerCase();
+    const strong = ["leak", "missing", "broken", "collapsed", "flooding", "interior"];
+    const good = ["dent", "granule", "crack", "shingle", "gutter", "vent", "skylight"];
+    if (strong.some(w => desc.includes(w))) s += 8;
+    else {
+      const gc = good.filter(w => desc.includes(w)).length;
+      if (gc >= 2) s += 5;
+      else if (gc >= 1) s += 3;
+      else if (desc.length > 30) s += 2;
+    }
+  }
   if (d.insurance_filed === "planning_to") s += 10;
   else if (d.insurance_filed === "true") s += 8;
+  if (d.roof_age != null) {
+    if (d.roof_age >= 20) s += 8;
+    else if (d.roof_age >= 15) s += 6;
+    else if (d.roof_age >= 10) s += 4;
+    else if (d.roof_age >= 5) s += 2;
+  }
   if (d.urgency === "emergency") s += 25;
   else if (d.urgency === "immediate") s += 18;
   else if (d.urgency === "this_month") s += 10;
@@ -75,7 +94,7 @@ const URGENCY_LABELS: Record<string, string> = {
 };
 
 const INTRO_MESSAGE =
-  "Hi! I'm Anna from Faraday Construction. We help Front Range homeowners with roofing, hail damage, windows, and solar. What can I help you with today?";
+  "Hi! I'm Anna with Faraday Construction. Quick question — are you a homeowner in Colorado? Most people I talk to end up paying nothing out of pocket for their roof. What brought you here today?";
 
 const INTRO_CHIPS = ["Hail/Storm damage", "Roofing", "Solar", "Windows"];
 
@@ -190,10 +209,16 @@ export default function ChatWidget({
         .map((m) => `${m.role === "assistant" ? "Anna" : "User"}: ${m.content}`)
         .join("\n");
 
+      const utm = getUtm();
       await fetch("/api/leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...leadData, conversation, source }),
+        body: JSON.stringify({
+          ...leadData,
+          conversation,
+          source: utmToSource(utm) || source,
+          source_detail: utmToSourceDetail(utm),
+        }),
       });
       setSaved(true);
       try { localStorage.removeItem(SESSION_KEY); } catch {}

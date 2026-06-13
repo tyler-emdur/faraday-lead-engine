@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { getUtm, utmToSource, utmToSourceDetail } from "@/lib/utm";
 
 interface EstimatorState {
   step: number;
@@ -90,7 +91,7 @@ export default function InsuranceEstimator() {
   const next = () => setState((prev) => ({ ...prev, step: prev.step + 1 }));
 
   const handleSubmit = async () => {
-    if (!state.phone && !state.name) return;
+    if (!state.phone) return;
     setState((prev) => ({ ...prev, submitting: true }));
 
     try {
@@ -105,7 +106,8 @@ export default function InsuranceEstimator() {
           urgency: state.damageIndicators.includes("interior") ? "emergency" : "immediate",
           damage_visible: state.damageIndicators.filter((d) => d !== "none").length > 0,
           notes: `Estimator: hail=${state.hailExposure}, roof=${state.roofAge}, damage=${state.damageIndicators.join(",")}, insurance=${state.insuranceStatus}`,
-          source: "estimator",
+          source: utmToSource(getUtm()) || "estimator",
+          source_detail: utmToSourceDetail(getUtm()),
         }),
       });
       setField("submitted", true);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { getUtm, utmToSource, utmToSourceDetail } from "@/lib/utm";
 
 const SERVICES = [
   { value: "hail_damage", label: "Hail Damage / Storm" },
@@ -22,9 +23,9 @@ export default function QuickCaptureForm({ source = "quick_form" }: { source?: s
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...form,
-          source,
+          source: utmToSource(getUtm()) || source,
+          source_detail: utmToSourceDetail(getUtm()),
           urgency: "immediate",
-          homeowner: true,
         }),
       });
       if (res.ok) {

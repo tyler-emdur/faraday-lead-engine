@@ -1,0 +1,145 @@
+name: Cron Jobs
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # runs every 15 min — handles all jobs below
+  workflow_dispatch:          # manual trigger from GitHub UI
+
+jobs:
+  storm-monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger storm check
+        run: |
+          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/storm-check" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+  reddit-monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger reddit monitor
+        run: |
+          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/reddit-monitor" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+  follow-up:
+    # Only run on the hour (minute 0 of any 15-min tick where GitHub fires at :00)
+    # GitHub Actions schedule isn't exact, but close enough for follow-ups
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if on-the-hour
+        id: check
+        run: |
+          MINUTE=$(date -u +%M)
+          if [ "$MINUTE" -lt 15 ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Trigger follow-up sender
+        if: steps.check.outputs.run == 'true'
+        run: |
+          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/follow-up" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+  blog-generate:
+    # Only run Monday mornings ~9am UTC
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if Monday 9am
+        id: check
+        run: |
+          DAY=$(date -u +%u)   # 1=Mon
+          HOUR=$(date -u +%H)
+          MINUTE=$(date -u +%M)
+          if [ "$DAY" = "1" ] && [ "$HOUR" = "9" ] && [ "$MINUTE" -lt 15 ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Trigger blog generator
+        if: steps.check.outputs.run == 'true'
+        run: |
+          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/blog-generate" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+  review-request:
+    # Only run daily at 11am UTC
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if 11am UTC
+        id: check
+        run: |
+          HOUR=$(date -u +%H)
+          MINUTE=$(date -u +%M)
+          if [ "$HOUR" = "11" ] && [ "$MINUTE" -lt 15 ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Trigger review request
+        if: steps.check.outputs.run == 'true'
+        run: |
+          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/review-request" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+  weekly-report:
+    # Only run Monday at 2pm UTC
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if Monday 2pm UTC
+        id: check
+        run: |
+          DAY=$(date -u +%u)
+          HOUR=$(date -u +%H)
+          MINUTE=$(date -u +%M)
+          if [ "$DAY" = "1" ] && [ "$HOUR" = "14" ] && [ "$MINUTE" -lt 15 ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Trigger weekly report
+        if: steps.check.outputs.run == 'true'
+        run: |
+          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/weekly-report" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+  intel-digest:
+    # Run daily at 7am MT = 2pm UTC
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if 2pm UTC
+        id: check
+        run: |
+          HOUR=$(date -u +%H)
+          MINUTE=$(date -u +%M)
+          if [ "$HOUR" = "14" ] && [ "$MINUTE" -lt 15 ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Trigger intel digest
+        if: steps.check.outputs.run == 'true'
+        run: |
+          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/intel-digest" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+  permit-monitor:
+    # Run daily at 8am MT = 3pm UTC
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if 3pm UTC
+        id: check
+        run: |
+          HOUR=$(date -u +%H)
+          MINUTE=$(date -u +%M)
+          if [ "$HOUR" = "15" ] && [ "$MINUTE" -lt 15 ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Trigger permit monitor
+        if: steps.check.outputs.run == 'true'
+        run: |
+          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/permit-monitor" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

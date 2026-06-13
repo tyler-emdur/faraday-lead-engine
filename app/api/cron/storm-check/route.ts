@@ -9,11 +9,12 @@
 // Optional: RESEND_API_KEY, FACEBOOK_PAGE_ACCESS_TOKEN + FACEBOOK_PAGE_ID, GOOGLE_SPREADSHEET_ID
 
 import { NextRequest, NextResponse } from "next/server";
-import { fetchColoradoAlerts, type StormAlert } from "@/lib/nws";
+import { fetchColoradoAlerts, fetchColoradoWatches, type StormAlert } from "@/lib/nws";
 import { notifyTyler } from "@/lib/notify";
 import { sendSMS } from "@/lib/twilio";
 import { postToFacebook } from "@/lib/social";
 import { getLeadsForReengagement } from "@/lib/sheets";
+import { scoreOpportunity, generateAIAnalysis, saveOpportunity, opportunityExists } from "@/lib/intel";
 
 export const maxDuration = 60;
 
@@ -221,6 +222,7 @@ export async function GET(req: NextRequest) {
   const results = {
     alerts_checked: 0,
     new_hail_alerts: 0,
+    watch_alerts: 0,
     tyler_sms_sent: false,
     tyler_email_sent: false,
     facebook_posted: false,
@@ -228,12 +230,60 @@ export async function GET(req: NextRequest) {
   };
 
   try {
-    const allAlerts = await fetchColoradoAlerts();
+    const [allAlerts, watchAlerts] = await Promise.all([
+      fetchColoradoAlerts(),
+      fetchColoradoWatches(),
+    ]);
     results.alerts_checked = allAlerts.length;
 
-    // Only care about Front Range hail
+    // ── Pre-storm watch alerts — Front Range watches (6–24 hrs ahead) ─────────
+    const frontRangeWatches = watchAlerts.filter(a => a.affected_cities.length > 0);
+    for (const watch of frontRangeWatches) {
+      const isNew = await isAlertNew(watch);
+      if (!isNew) continue;
+
+      results.watch_alerts++;
+      await markAlertProcessed(watch);
+
+      const cities = watch.affected_cities.slice(0, 4).join(", ");
+      const prepSms = [
+        `⚡ STORM WATCH — ${watch.event}`,
+        `Affecting: ${cities}`,
+        `Storm possible in 2–12 hours. Prep now:`,
+        `→ Join Facebook groups for ${watch.affected_cities[0]}`,
+        `→ Draft your Nextdoor post`,
+        `→ Be ready to run ad within 1 hr of storm`,
+        `Check: /storm`,
+      ].join("\n");
+
+      await notifyTyler(prepSms, `⚡ Watch: ${watch.event} — ${cities}`)
+        .catch(e => console.error("Watch notify failed:", e));
+
+      // Create low-priority opportunity for each affected city
+      if (process.env.SUPABASE_URL) {
+        for (const city of watch.affected_cities.slice(0, 4)) {
+          const sourceId = `watch_${watch.nws_id}_${city.replace(/\s+/g, "_")}`;
+          if (await opportunityExists(sourceId)) continue;
+          await saveOpportunity({
+            source: "storm",
+            source_id: sourceId,
+            type: "storm_victim_area",
+            priority: "medium",
+            title: `Storm Watch — ${city} (${watch.event})`,
+            body: watch.headline,
+            location: city,
+            urgency_score: 45,
+            opportunity_score: 45,
+            why_it_matters: `Storm watch issued for ${city}. Storm expected in 2–12 hours. Get positioned in community groups now.`,
+            outreach_message: `Storm watch active for ${city}. Pre-stage your posts so you can publish the moment hail falls.`,
+          });
+        }
+      }
+    }
+
+    // Only care about Front Range hail warnings
     const hailAlerts = allAlerts.filter(
-      a => a.has_hail && a.affected_cities.length > 0
+      a => a.has_hail && a.affected_cities.length > 0 && !a.event.toLowerCase().includes("watch")
     );
 
     for (const alert of hailAlerts) {
@@ -291,10 +341,69 @@ export async function GET(req: NextRequest) {
         console.error("Re-engagement step failed:", e);
       }
 
-      // ── 5. Log to Supabase activity ────────────────────────────────────────
+      // ── 5. Create intelligence opportunities per affected city ────────────
       if (process.env.SUPABASE_URL) {
         try {
           const { getSupabase } = await import("@/lib/supabase");
+
+          // Get the storm_alerts row we just inserted to get its UUID
+          const { data: stormRow } = await getSupabase()
+            .from("storm_alerts")
+            .select("id")
+            .eq("nws_id", alert.nws_id)
+            .maybeSingle();
+
+          const hailMatch = alert.description.match(/hail(?:\s+up\s+to)?\s+(\d+(?:\.\d+)?)\s*inch/i);
+          const hailSizeInches = hailMatch ? parseFloat(hailMatch[1]) : 0.75;
+
+          for (const city of affectedCities.slice(0, 6)) {
+            const oppSourceId = `storm_${alert.nws_id}_${city.replace(/\s+/g, "_")}`;
+            if (await opportunityExists(oppSourceId)) continue;
+
+            const { score, priority } = scoreOpportunity({
+              source: "storm",
+              hailSizeInches,
+              ageHours: 0,
+            });
+
+            const title = `Hail hit ${city} — ${hailSizeInches >= 1 ? `${hailSizeInches}" hail` : hailNote(alert)}`;
+            const body = `NWS alert: ${alert.headline}. Affected area: ${alert.areas.slice(0, 200)}`;
+
+            const analysis = priority !== "low"
+              ? await generateAIAnalysis({ title, body, source: "storm", location: city, score, intent: "storm" })
+              : null;
+
+            const opp = await saveOpportunity({
+              source: "storm",
+              source_id: oppSourceId,
+              type: "storm_victim_area",
+              priority,
+              title,
+              body,
+              location: city,
+              urgency_score: score,
+              opportunity_score: score,
+              why_it_matters: analysis?.why_it_matters,
+              close_probability: analysis?.close_probability,
+              outreach_message: analysis?.outreach_message,
+              follow_up_schedule: analysis?.follow_up_schedule,
+            });
+
+            // Create storm_affected_area record
+            if (stormRow?.id) {
+              const severityScore = hailSizeInches >= 2 ? 90 : hailSizeInches >= 1.5 ? 75 : hailSizeInches >= 1 ? 60 : 40;
+              await getSupabase().from("storm_affected_areas").insert({
+                storm_alert_id: stormRow.id,
+                city,
+                hail_size_inches: hailSizeInches,
+                severity_score: severityScore,
+                impact_radius_miles: hailSizeInches >= 1.5 ? 8 : hailSizeInches >= 1 ? 5 : 3,
+                estimated_homes: Math.round(severityScore * 50),
+                opportunity_id: opp?.id ?? null,
+              });
+            }
+          }
+
           await getSupabase().from("activity_log").insert({
             type: "storm_detected",
             description: `Hail in ${affectedCities.join(", ")} — Tyler notified, ${results.leads_reengaged} leads re-engaged`,
@@ -305,7 +414,9 @@ export async function GET(req: NextRequest) {
               leads_reengaged: results.leads_reengaged,
             },
           });
-        } catch {}
+        } catch (e) {
+          console.error("Intel opportunity creation failed:", e);
+        }
       }
 
       // Only process the first (most severe) new hail alert to avoid SMS spam

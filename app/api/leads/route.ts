@@ -9,6 +9,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { scoreLead, gradeLead } from "@/lib/scoring";
 import { notifyTyler, confirmLead } from "@/lib/notify";
 import { appendLeadToSheet } from "@/lib/sheets";
+import { normalizePhone } from "@/lib/phone";
+
+// Simple in-memory rate limiter: max 5 lead submissions per IP per 10 minutes
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + 10 * 60 * 1000 });
+    return true;
+  }
+  if (entry.count >= 5) return false;
+  entry.count++;
+  return true;
+}
 
 type LeadBody = {
   name?: string;
@@ -32,11 +47,21 @@ type LeadBody = {
 
 export async function POST(req: NextRequest) {
   try {
+    // Rate limiting
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+    if (!checkRateLimit(ip)) {
+      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+    }
+
     const body: LeadBody = await req.json();
+
+    // Normalize phone number for consistency and deduplication
+    const normalizedPhone = normalizePhone(body.phone);
 
     // Normalize insurance_filed: the estimator sends a boolean, scoreLead expects string
     const scoreInput = {
       ...body,
+      phone: normalizedPhone,
       insurance_filed: body.insurance_filed != null ? String(body.insurance_filed) : undefined,
     };
     const score = scoreLead(scoreInput);
@@ -46,7 +71,7 @@ export async function POST(req: NextRequest) {
     const lead = {
       id: crypto.randomUUID(),
       name: body.name || null,
-      phone: body.phone || null,
+      phone: normalizedPhone,
       email: body.email || null,
       zip: body.zip || null,
       city: body.city || null,
@@ -74,6 +99,30 @@ export async function POST(req: NextRequest) {
       try {
         const { getSupabase } = await import("@/lib/supabase");
         const db = getSupabase();
+
+        // Deduplication: if a lead with the same phone submitted in the last 30 days,
+        // update their record rather than creating a duplicate.
+        if (normalizedPhone) {
+          const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+          const { data: existing } = await db
+            .from("leads")
+            .select("id, score")
+            .eq("phone", normalizedPhone)
+            .gte("created_at", thirtyDaysAgo)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (existing && score > existing.score) {
+            // Upgrade the existing record with better data (higher score = more info)
+            await db.from("leads").update({ score, grade, notes: lead.notes, source_detail: lead.source_detail }).eq("id", existing.id);
+            lead.id = existing.id;
+            return NextResponse.json({ success: true, lead, deduplicated: true });
+          } else if (existing) {
+            lead.id = existing.id;
+            return NextResponse.json({ success: true, lead, deduplicated: true });
+          }
+        }
 
         const { data: dbLead, error } = await db
           .from("leads")

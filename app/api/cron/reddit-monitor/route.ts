@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { notifyTyler } from "@/lib/notify";
+import { scoreOpportunity, generateAIAnalysis, saveOpportunity, opportunityExists } from "@/lib/intel";
 
 export const maxDuration = 45;
 
@@ -170,7 +171,7 @@ export async function GET(req: NextRequest) {
 
   const results = { posts_checked: 0, alerts_sent: 0, high_intent: 0 };
   const seenIds = await getSeenPostIds();
-  const CUTOFF_SECONDS = 20 * 60; // Only look at posts from last 20 min
+  const CUTOFF_SECONDS = 18 * 60; // 18 min — slightly wider than the 15-min cron interval
 
   for (const subreddit of SUBREDDITS) {
     const posts = await fetchRecentPosts(subreddit);
@@ -201,6 +202,44 @@ export async function GET(req: NextRequest) {
       results.alerts_sent++;
       if (intent === "high") results.high_intent++;
       console.log(`Reddit alert sent: r/${subreddit} — "${post.title.slice(0, 60)}"`);
+
+      // Save to intelligence opportunities table
+      if (!(await opportunityExists(`reddit_${post.id}`))) {
+        const ageHours = (Date.now() / 1000 - post.created_utc) / 3600;
+        const { score, priority } = scoreOpportunity({
+          source: "reddit",
+          intent: intent as "high" | "medium" | "awareness",
+          ageHours,
+          hasUrl: true,
+          hasAuthor: !!post.author,
+        });
+
+        const title = `r/${post.subreddit}: "${post.title.slice(0, 100)}"`;
+        const body = post.selftext?.slice(0, 600) || post.title;
+        const location = `r/${post.subreddit}`;
+
+        const analysis = priority !== "low"
+          ? await generateAIAnalysis({ title, body, source: "reddit", location, score, intent })
+          : null;
+
+        await saveOpportunity({
+          source: "reddit",
+          source_id: `reddit_${post.id}`,
+          type: intent === "high" ? "referral_request" : "community_post",
+          priority,
+          title,
+          body,
+          url: `https://reddit.com${post.permalink}`,
+          author: post.author,
+          location,
+          urgency_score: score,
+          opportunity_score: score,
+          why_it_matters: analysis?.why_it_matters,
+          close_probability: analysis?.close_probability,
+          outreach_message: analysis?.outreach_message,
+          follow_up_schedule: analysis?.follow_up_schedule,
+        });
+      }
     }
   }
 

@@ -89,3 +89,13 @@ export async function fetchColoradoAlerts(): Promise<StormAlert[]> {
 export function isRelevantToFrontRange(alert: StormAlert): boolean {
   return alert.affected_cities.length > 0 || alert.has_hail;
 }
+
+// Watches come 6–24 hours before the storm. Same API, filter by "watch" in event name.
+export async function fetchColoradoWatches(): Promise<StormAlert[]> {
+  const all = await fetchColoradoAlerts();
+  return all.filter(a => a.event.toLowerCase().includes("watch"));
+}
+
+export function isWatch(alert: StormAlert): boolean {
+  return alert.event.toLowerCase().includes("watch");
+}

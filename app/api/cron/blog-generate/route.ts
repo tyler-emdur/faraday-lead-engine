@@ -105,7 +105,15 @@ Phone: ${process.env.NEXT_PUBLIC_COMPANY_PHONE || "(303) 555-0123"}`,
     });
 
     const text = completion.choices[0]?.message?.content || "";
-    const post = JSON.parse(text.replace(/```json|```/g, "").trim());
+    const clean = text.replace(/```json|```/g, "").trim();
+    let post;
+    try {
+      post = JSON.parse(clean);
+    } catch {
+      const match = clean.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error(`AI returned unparseable response: ${clean.slice(0, 200)}`);
+      post = JSON.parse(match[0]);
+    }
 
     const { data: saved } = await db
       .from("blog_posts")

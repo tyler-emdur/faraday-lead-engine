@@ -1,16 +1,19 @@
-// Tyler's Storm Tracker — active CO hail alerts + copy-paste posts + ad targeting guide
-// This is your traffic trigger: storm hits → you post → leads come in within hours
+// Storm War Room — Tyler's command center when hail hits
+// Shows active alerts, watches, affected-city posting links, recent leads, performance history
 import type { Metadata } from "next";
 import CopyBlock from "@/components/CopyBlock";
+import { scoreNeighborhoods } from "@/lib/saturation";
 
 export const metadata: Metadata = {
-  title: "Storm Tracker — Faraday Leads",
+  title: "Storm War Room — Faraday Leads",
   robots: "noindex",
 };
 
-export const revalidate = 300; // NWS data refreshes every 5 minutes
+export const revalidate = 180;
 
-interface NWSFeature {
+// ─── NWS ──────────────────────────────────────────────────────────────────────
+
+interface NWSAlert {
   properties: {
     id: string;
     event: string;
@@ -18,132 +21,233 @@ interface NWSFeature {
     description: string;
     areaDesc: string;
     sent: string;
-    effective: string;
     expires: string;
     severity: string;
-    parameters?: {
-      hailSize?: string[];
-      maxHailSize?: string[];
-    };
+    parameters?: { hailSize?: string[]; maxHailSize?: string[] };
   };
 }
 
-// Pre-seeded list of high-value Front Range community groups.
-// Add more as you find them — the more groups you're in, the faster you can blanket an area after a storm.
-const COMMUNITY_GROUPS = [
+const FRONT_RANGE = [
+  "Denver","Boulder","Fort Collins","Colorado Springs","Longmont","Loveland",
+  "Broomfield","Thornton","Arvada","Westminster","Lakewood","Aurora",
+  "Castle Rock","Parker","Littleton","Golden","Brighton","Greeley",
+  "Erie","Frederick","Firestone","Dacono","Mead","Berthoud","Windsor",
+  "Highlands Ranch","Centennial","Englewood","Wheat Ridge","Lafayette",
+  "Louisville","Superior","Niwot","Evans","Milliken","Johnstown","Timnath",
+];
+
+async function fetchAlerts(): Promise<{ warnings: NWSAlert[]; watches: NWSAlert[] }> {
+  try {
+    const res = await fetch("https://api.weather.gov/alerts/active?area=CO", {
+      headers: { "User-Agent": "FaradayLeads/1.0" },
+      next: { revalidate: 180 },
+    });
+    if (!res.ok) return { warnings: [], watches: [] };
+    const data = await res.json();
+    const stormEvents = ["severe thunderstorm","hail","tornado","wind","storm"];
+    const relevant = (data.features || []).filter((f: NWSAlert) =>
+      stormEvents.some(e => f.properties.event.toLowerCase().includes(e))
+    );
+    const warnings = relevant.filter((f: NWSAlert) => !f.properties.event.toLowerCase().includes("watch"));
+    const watches  = relevant.filter((f: NWSAlert) =>  f.properties.event.toLowerCase().includes("watch"));
+    return { warnings, watches };
+  } catch {
+    return { warnings: [], watches: [] };
+  }
+}
+
+function extractHailSize(a: NWSAlert): string | null {
+  const p = a.properties.parameters;
+  if (p?.hailSize?.[0]) return p.hailSize[0];
+  if (p?.maxHailSize?.[0]) return p.maxHailSize[0];
+  const m = a.properties.description.match(/hail(?:\s+up\s+to)?\s+(\d+(?:\.\d+)?)\s*inch/i);
+  return m ? `${m[1]}"` : null;
+}
+
+function alertCities(areaDesc: string): string[] {
+  return areaDesc.split(";").map(s => s.trim().split(",")[0].trim()).filter(Boolean);
+}
+
+function frontRangeCities(areaDesc: string): string[] {
+  const all = alertCities(areaDesc);
+  const fr = all.filter(c => FRONT_RANGE.some(fr => c.toLowerCase().includes(fr.toLowerCase()) || fr.toLowerCase().includes(c.toLowerCase())));
+  return fr.length > 0 ? fr.slice(0, 6) : all.slice(0, 4);
+}
+
+function timeAgo(d: string): string {
+  const h = Math.round((Date.now() - new Date(d).getTime()) / 3600000);
+  if (h < 1) return "Just now";
+  if (h === 1) return "1 hr ago";
+  if (h < 24) return `${h} hrs ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+// ─── SUPABASE DATA ─────────────────────────────────────────────────────────────
+
+interface LeadRow { city: string | null; name: string | null; service: string | null; created_at: string }
+
+async function fetchRecentLeads(cities: string[]): Promise<LeadRow[]> {
+  if (!process.env.SUPABASE_URL || cities.length === 0) return [];
+  try {
+    const { getSupabase } = await import("@/lib/supabase");
+    const since = new Date(Date.now() - 60 * 86400000).toISOString();
+    const { data } = await getSupabase()
+      .from("leads")
+      .select("city,name,service,created_at")
+      .in("city", cities)
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(30);
+    return (data as LeadRow[]) || [];
+  } catch { return []; }
+}
+
+async function fetchCityPerformance(): Promise<{ city: string; count: number }[]> {
+  if (!process.env.SUPABASE_URL) return [];
+  try {
+    const { getSupabase } = await import("@/lib/supabase");
+    const since = new Date(Date.now() - 730 * 86400000).toISOString();
+    const { data } = await getSupabase()
+      .from("leads")
+      .select("city")
+      .not("city", "is", null)
+      .gte("created_at", since)
+      .limit(2000);
+    if (!data) return [];
+    const counts: Record<string, number> = {};
+    for (const r of data) {
+      if (r.city) counts[r.city] = (counts[r.city] || 0) + 1;
+    }
+    return Object.entries(counts)
+      .map(([city, count]) => ({ city, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+  } catch { return []; }
+}
+
+// ─── COMMUNITY GROUPS ─────────────────────────────────────────────────────────
+
+interface Group { name: string; platform: "Facebook" | "Nextdoor" | "Reddit"; url: string; desc: string }
+
+const ALL_GROUPS: { region: string; keywords: string[]; groups: Group[] }[] = [
   {
-    city: "Denver Metro",
+    region: "Denver Metro",
+    keywords: ["denver","englewood","wheat ridge","commerce city","commerce","glendale"],
     groups: [
-      { name: "Denver, Colorado — Community Board", platform: "Facebook", description: "150K+ members", url: "https://www.facebook.com/groups/denvercommunityboard" },
-      { name: "Denver Homeowners & Neighbors", platform: "Facebook", description: "Homeowners focus", url: "https://www.facebook.com/search/groups/?q=Denver+homeowners+Colorado" },
-      { name: "r/Denver", platform: "Reddit", description: "Monitor for hail/roof posts", url: "https://www.reddit.com/r/Denver/new" },
-      { name: "Nextdoor — Denver neighborhoods", platform: "Nextdoor", description: "Join your local neighborhoods", url: "https://nextdoor.com" },
+      { name: "Denver Community Board", platform: "Facebook", url: "https://www.facebook.com/groups/denvercommunityboard", desc: "150K+ members" },
+      { name: "Denver Homeowners & Neighbors", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Denver+homeowners+Colorado", desc: "Homeowners focus" },
+      { name: "Nextdoor Denver", platform: "Nextdoor", url: "https://nextdoor.com", desc: "Join your local neighborhood" },
+      { name: "r/Denver", platform: "Reddit", url: "https://reddit.com/r/Denver/new", desc: "Monitor for storm posts" },
     ],
   },
   {
-    city: "Boulder / Longmont",
+    region: "Boulder / Longmont / Lafayette / Louisville",
+    keywords: ["boulder","longmont","lafayette","louisville","superior","niwot","lyons"],
     groups: [
-      { name: "Boulder Community Board", platform: "Facebook", description: "Boulder community hub", url: "https://www.facebook.com/search/groups/?q=Boulder+Colorado+community" },
-      { name: "Longmont Community Forum", platform: "Facebook", description: "Active local group", url: "https://www.facebook.com/search/groups/?q=Longmont+Colorado+community" },
-      { name: "r/Boulder", platform: "Reddit", description: "Monitor for storm posts", url: "https://www.reddit.com/r/Boulder/new" },
-      { name: "Boulder County Homeowners", platform: "Facebook", description: "Homeowners focus", url: "https://www.facebook.com/search/groups/?q=Boulder+County+homeowners" },
+      { name: "Boulder County Community", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Boulder+Colorado+community", desc: "Boulder area hub" },
+      { name: "Longmont Community Forum", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Longmont+Colorado+community", desc: "Active local group" },
+      { name: "Nextdoor Boulder", platform: "Nextdoor", url: "https://nextdoor.com", desc: "Best for recommendations" },
+      { name: "r/Boulder", platform: "Reddit", url: "https://reddit.com/r/Boulder/new", desc: "Storm posts" },
     ],
   },
   {
-    city: "Fort Collins / Loveland",
+    region: "Fort Collins / Loveland / Greeley",
+    keywords: ["fort collins","loveland","greeley","windsor","timnath","evans","milliken","johnstown","berthoud"],
     groups: [
-      { name: "Fort Collins Community Board", platform: "Facebook", description: "Large active group", url: "https://www.facebook.com/search/groups/?q=Fort+Collins+community+board" },
-      { name: "Loveland Colorado Community", platform: "Facebook", description: "Local community", url: "https://www.facebook.com/search/groups/?q=Loveland+Colorado+community" },
-      { name: "r/FortCollins", platform: "Reddit", description: "Monitor for storm posts", url: "https://www.reddit.com/r/FortCollins/new" },
-      { name: "Northern Colorado Homeowners", platform: "Facebook", description: "NoCo homeowners", url: "https://www.facebook.com/search/groups/?q=Northern+Colorado+homeowners" },
+      { name: "Fort Collins Community Board", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Fort+Collins+community+board", desc: "Large active group" },
+      { name: "Loveland Colorado Community", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Loveland+Colorado+community", desc: "Local community" },
+      { name: "Nextdoor NoCo", platform: "Nextdoor", url: "https://nextdoor.com", desc: "Northern Colorado neighborhoods" },
+      { name: "r/FortCollins", platform: "Reddit", url: "https://reddit.com/r/FortCollins/new", desc: "Storm posts" },
     ],
   },
   {
-    city: "Broomfield / Westminster / Arvada",
+    region: "Broomfield / Westminster / Arvada / Thornton",
+    keywords: ["broomfield","westminster","arvada","thornton","northglenn","federal heights"],
     groups: [
-      { name: "Broomfield Community Group", platform: "Facebook", description: "High-value suburb", url: "https://www.facebook.com/search/groups/?q=Broomfield+Colorado+community" },
-      { name: "Westminster Colorado Neighbors", platform: "Facebook", description: "Active local group", url: "https://www.facebook.com/search/groups/?q=Westminster+Colorado+community" },
-      { name: "Arvada Community Board", platform: "Facebook", description: "Arvada homeowners", url: "https://www.facebook.com/search/groups/?q=Arvada+Colorado+community" },
+      { name: "Broomfield Community Group", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Broomfield+Colorado+community", desc: "High-value suburb" },
+      { name: "Westminster Colorado Neighbors", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Westminster+Colorado+community", desc: "Active local group" },
+      { name: "Arvada Community Board", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Arvada+Colorado+community", desc: "Arvada homeowners" },
+      { name: "Nextdoor NW Denver suburbs", platform: "Nextdoor", url: "https://nextdoor.com", desc: "Join all neighborhoods" },
     ],
   },
   {
-    city: "Aurora / Parker / Lakewood",
+    region: "Aurora / Centennial",
+    keywords: ["aurora","centennial"],
     groups: [
-      { name: "Aurora Colorado Community", platform: "Facebook", description: "Large east-Denver suburb", url: "https://www.facebook.com/search/groups/?q=Aurora+Colorado+community" },
-      { name: "Parker Colorado Neighbors", platform: "Facebook", description: "Affluent suburb, great leads", url: "https://www.facebook.com/search/groups/?q=Parker+Colorado+community" },
-      { name: "Lakewood Colorado Community", platform: "Facebook", description: "West Denver suburb", url: "https://www.facebook.com/search/groups/?q=Lakewood+Colorado+community" },
+      { name: "Aurora Colorado Community", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Aurora+Colorado+community", desc: "Large east-Denver suburb" },
+      { name: "Centennial Colorado Neighbors", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Centennial+Colorado+community", desc: "Centennial homeowners" },
+      { name: "Nextdoor Aurora", platform: "Nextdoor", url: "https://nextdoor.com", desc: "Aurora neighborhoods" },
     ],
   },
   {
-    city: "Statewide (Post After Major Events)",
+    region: "Parker / Castle Rock / Highlands Ranch / Littleton",
+    keywords: ["parker","castle rock","highlands ranch","littleton","lone tree","castle pines"],
     groups: [
-      { name: "r/Colorado", platform: "Reddit", description: "Statewide — major storm events", url: "https://www.reddit.com/r/Colorado/new" },
-      { name: "Colorado Homeowners Network", platform: "Facebook", description: "Statewide homeowners", url: "https://www.facebook.com/search/groups/?q=Colorado+homeowners+network" },
-      { name: "r/HomeImprovement", platform: "Reddit", description: "People actively seeking contractors", url: "https://www.reddit.com/r/HomeImprovement/new" },
+      { name: "Parker Colorado Neighbors", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Parker+Colorado+community", desc: "Affluent suburb" },
+      { name: "Castle Rock / Highlands Ranch", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Castle+Rock+Colorado+community", desc: "South Denver corridor" },
+      { name: "Nextdoor South Denver suburbs", platform: "Nextdoor", url: "https://nextdoor.com", desc: "High-value neighborhoods" },
+    ],
+  },
+  {
+    region: "Erie / Frederick / Firestone / Brighton",
+    keywords: ["erie","frederick","firestone","dacono","mead","brighton","commerce city"],
+    groups: [
+      { name: "Erie Colorado Community", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Erie+Colorado+community", desc: "Fast-growing suburb" },
+      { name: "Weld County Neighbors", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Weld+County+Colorado+community", desc: "Covers Frederick, Firestone" },
+      { name: "Nextdoor NE Colorado", platform: "Nextdoor", url: "https://nextdoor.com", desc: "NE Front Range neighborhoods" },
+    ],
+  },
+  {
+    region: "Lakewood / Golden",
+    keywords: ["lakewood","golden","edgewater","morrison"],
+    groups: [
+      { name: "Lakewood Colorado Community", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Lakewood+Colorado+community", desc: "West Denver suburb" },
+      { name: "Golden Colorado Neighbors", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Golden+Colorado+community", desc: "Golden area" },
+      { name: "Nextdoor West Denver suburbs", platform: "Nextdoor", url: "https://nextdoor.com", desc: "Jefferson County neighborhoods" },
     ],
   },
 ];
 
-async function getColoradoAlerts(): Promise<NWSFeature[]> {
-  try {
-    const res = await fetch(
-      "https://api.weather.gov/alerts/active?area=CO",
-      {
-        headers: { "User-Agent": "FaradayLeads/1.0" },
-        next: { revalidate: 300 },
-      }
-    );
-    if (!res.ok) return [];
-    const data = await res.json();
-    const stormEvents = [
-      "severe thunderstorm",
-      "hail",
-      "tornado",
-      "wind advisory",
-      "high wind",
-    ];
-    return (data.features || []).filter((f: NWSFeature) => {
-      const event = f.properties.event.toLowerCase();
-      return stormEvents.some(e => event.includes(e));
-    });
-  } catch {
-    return [];
+function groupsForCity(city: string): typeof ALL_GROUPS[number] | null {
+  const lower = city.toLowerCase();
+  return ALL_GROUPS.find(r => r.keywords.some(k => lower.includes(k) || k.includes(lower))) ?? null;
+}
+
+function affectedRegions(cities: string[]): typeof ALL_GROUPS[number][] {
+  const seen = new Set<string>();
+  const result: typeof ALL_GROUPS[number][] = [];
+  for (const city of cities) {
+    const region = groupsForCity(city);
+    if (region && !seen.has(region.region)) {
+      seen.add(region.region);
+      result.push(region);
+    }
   }
+  return result;
 }
 
-function extractHailSize(alert: NWSFeature): string | null {
-  const params = alert.properties.parameters;
-  if (params?.hailSize?.[0]) return params.hailSize[0];
-  if (params?.maxHailSize?.[0]) return params.maxHailSize[0];
-  const match = alert.properties.description.match(
-    /hail(?:\s+up\s+to)?\s+(\d+(?:\.\d+)?)\s*inch/i
-  );
-  return match ? `${match[1]} inch` : null;
+const PLATFORM_COLOR: Record<string, string> = {
+  Facebook: "bg-blue-900/50 text-blue-300",
+  Nextdoor: "bg-green-900/50 text-green-300",
+  Reddit: "bg-orange-900/50 text-orange-300",
+};
+
+// ─── POST TEMPLATES ────────────────────────────────────────────────────────────
+
+function nextdoorPost(city: string, hailSize: string | null) {
+  const sizeNote = hailSize ? ` — ${hailSize} hail was measured in the area` : "";
+  return `Hi neighbors! Just a heads up after last night's storm${sizeNote}:
+
+Many homeowners in ${city} have roof or gutter damage they haven't noticed yet. It often doesn't look bad from the ground but shows up in an inspection.
+
+Faraday Construction is offering free inspections for our area this week. They helped my neighbor get $14,000 covered last month — he only paid his deductible.
+
+Don't wait — insurance companies get tougher the longer you wait after a storm.
+
+Free inspection: [YOUR LINK] or call/text (720) 766-1518`;
 }
 
-function primaryCity(areaDesc: string): string {
-  return areaDesc.split(";")[0].trim().split(",")[0].trim();
-}
-
-function affectedCities(areaDesc: string): string[] {
-  return areaDesc
-    .split(";")
-    .map(a => a.trim().split(",")[0].trim())
-    .filter(Boolean)
-    .slice(0, 6);
-}
-
-function timeAgo(dateStr: string): string {
-  const hours = Math.round(
-    (Date.now() - new Date(dateStr).getTime()) / 3600000
-  );
-  if (hours < 1) return "Just now";
-  if (hours === 1) return "1 hr ago";
-  if (hours < 24) return `${hours} hrs ago`;
-  return `${Math.round(hours / 24)} days ago`;
-}
-
-function facebookPost(city: string, hailSize: string | null): string {
+function facebookPost(city: string, hailSize: string | null) {
   const sizeNote = hailSize ? ` (${hailSize} hail reported!)` : "";
   return `ATTENTION ${city.toUpperCase()} HOMEOWNERS${sizeNote}
 
@@ -153,309 +257,340 @@ Faraday Construction is doing FREE inspections this week. We've helped 1,200+ Co
 
 ⚠️ Don't wait — insurance claim windows close fast after storms.
 
-👉 [YOUR LINK HERE]
+👉 [YOUR LINK]
 
 Free inspection. Zero cost if no damage. Same-day availability.
 
-#${city.replace(/\s+/g, "")}CO #HailDamage #FreeRoofInspection #FaradayConstruction #ColoradoHail`;
+#${city.replace(/\s+/g, "")}CO #HailDamage #FreeRoofInspection #FaradayConstruction`;
 }
 
-function nextdoorPost(city: string, hailSize: string | null): string {
-  const sizeNote = hailSize
-    ? ` — ${hailSize} hail was measured in the area`
-    : "";
-  return `Hi neighbors! Just a heads up after last night's storm${sizeNote}:
-
-Many homeowners in ${city} have roof or gutter damage they haven't noticed yet. It often doesn't look bad from the ground but shows up in an inspection.
-
-Faraday Construction is offering free inspections specifically for our area this week. They helped my neighbor get $14,000 covered last month — he only paid his deductible. Fast, professional, no pressure.
-
-If you think you might have damage, don't wait too long — insurance companies get tougher the longer you wait after a storm.
-
-Free inspection link: [YOUR LINK HERE]
-Or call/text: (720) 766-1518`;
+function commentTemplate(city: string) {
+  return `We do free inspections in ${city} — most damage is invisible from the ground. Happy to take a look, no commitment. (720) 766-1518 or [YOUR LINK]`;
 }
 
-function adHeadline(city: string, hailSize: string | null): string {
-  const size = hailSize ? ` — ${hailSize} Hail Reported` : "";
-  return `📍 ${city} Homeowners${size}: Your Roof May Already Be Covered
-
-Most storm damage claims come in at $9,000–$22,000 — paid by your insurance, not you.
-
-FREE inspection • We handle all paperwork • Same-day available
-
-✓ BBB A+ Rated  ✓ 1,200+ Families Helped  ✓ Licensed & Insured
-
-[YOUR LINK] | (720) 766-1518
-
-Target: Homeowners in ${city} area, 30–65 yrs, $60K+ household income
-Budget: $200–500 for first 48 hrs. Scale if cost/lead < $25.`;
+function dmTemplate(city: string) {
+  return `Hey! Saw your post about the storm in ${city}. Faraday Construction does free inspections — we find damage you can't see from the ground, and if your insurance covers it we handle all the paperwork. Want me to set one up? No commitment.`;
 }
 
-export default async function StormTrackerPage() {
-  const alerts = await getColoradoAlerts();
-  const hailAlerts = alerts.filter(a => {
-    const event = a.properties.event.toLowerCase();
-    return event.includes("severe thunderstorm") || event.includes("hail");
-  });
-  const otherAlerts = alerts.filter(a => !hailAlerts.includes(a));
+// ─── PAGE ──────────────────────────────────────────────────────────────────────
+
+export default async function StormWarRoom() {
+  const [{ warnings, watches }, cityPerformance] = await Promise.all([
+    fetchAlerts(),
+    fetchCityPerformance(),
+  ]);
+
+  const allAffectedCities = [
+    ...warnings.flatMap(a => frontRangeCities(a.properties.areaDesc)),
+    ...watches.flatMap(a => frontRangeCities(a.properties.areaDesc)),
+  ];
+  const uniqueAffectedCities = [...new Set(allAffectedCities)];
+
+  // Extract hail size from the most severe active warning
+  const primaryHailSize = (() => {
+    for (const w of warnings) {
+      const h = extractHailSize(w);
+      if (h) {
+        const m = h.match(/(\d+(?:\.\d+)?)/);
+        if (m) return parseFloat(m[1]);
+      }
+    }
+    return 0.75;
+  })();
+
+  const [recentLeads, neighborhoodScores] = await Promise.all([
+    fetchRecentLeads(uniqueAffectedCities),
+    uniqueAffectedCities.length > 0
+      ? scoreNeighborhoods(uniqueAffectedCities, primaryHailSize)
+      : Promise.resolve([]),
+  ]);
+
+  const isActive = warnings.length > 0;
+  const isWatch = watches.length > 0;
+  const status = isActive ? "🔴 ACTIVE" : isWatch ? "🟡 WATCH" : "✓ Clear";
+  const statusColor = isActive ? "text-red-400" : isWatch ? "text-amber-400" : "text-green-400";
 
   return (
     <main className="min-h-screen bg-gray-950 py-8 px-4">
       <div className="max-w-4xl mx-auto">
 
         {/* Header */}
-        <div className="mb-6">
-          <div className="flex items-center gap-3 mb-1">
-            <h1 className="text-2xl font-black text-white">Storm Tracker</h1>
-            <span className="text-xs bg-amber-900/40 text-amber-400 border border-amber-700/40 px-2 py-1 rounded-full font-semibold">
-              Tyler&apos;s Lead Trigger
-            </span>
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <h1 className="text-2xl font-black text-white">Storm War Room</h1>
+              <span className={`text-sm font-black ${statusColor}`}>{status}</span>
+            </div>
+            <p className="text-gray-500 text-xs">
+              NWS data • refreshes every 3 min • {new Date().toLocaleTimeString("en-US", { timeZone: "America/Denver", hour: "2-digit", minute: "2-digit" })} MT
+            </p>
           </div>
-          <p className="text-gray-400 text-sm">
-            Active Colorado severe weather alerts from National Weather Service. Auto-refreshes every 5 min.
-          </p>
+          <a href="/intel" className="text-xs text-gray-500 hover:text-white border border-gray-800 px-3 py-1.5 rounded-lg transition-colors">
+            Lead Intel →
+          </a>
         </div>
 
-        {/* ROI banner */}
-        <div className="bg-green-900/20 border border-green-700/30 rounded-2xl p-4 mb-6">
-          <p className="text-green-300 text-sm font-semibold mb-1">Your playbook when a storm hits:</p>
-          <p className="text-gray-400 text-xs">
-            Post to Nextdoor + local Facebook groups (free) → Run $200–500 Facebook ad → Capture 10–40 leads → $1,000–$4,000 in jobs at $100 each
-          </p>
+        {/* Playbook reminder */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 mb-6 text-xs text-gray-400">
+          <span className="text-white font-semibold">Storm playbook: </span>
+          Post Nextdoor + Facebook groups <span className="text-gray-600">(free, 20–35% close rate)</span> →
+          Run $200–500 Facebook ad targeting hit ZIPs →
+          Reply to every Reddit/Nextdoor comment within 15 min →
+          <span className="text-green-400 font-semibold"> $500–$3,000 per storm event</span>
         </div>
 
-        {/* Active hail alerts — the money signals */}
-        {hailAlerts.length > 0 && (
-          <div className="mb-8">
+        {/* ── ACTIVE WARNINGS ─────────────────────────────────────────────────── */}
+        {warnings.length > 0 && (
+          <section className="mb-8">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
               <h2 className="text-red-400 font-bold text-sm uppercase tracking-wide">
-                {hailAlerts.length} Active Hail / Severe Storm Alert{hailAlerts.length > 1 ? "s" : ""} — Act Now
+                {warnings.length} Active Warning{warnings.length > 1 ? "s" : ""} — Post NOW
               </h2>
             </div>
-            <div className="space-y-5">
-              {hailAlerts.map(alert => {
-                const hailSize = extractHailSize(alert);
-                const city = primaryCity(alert.properties.areaDesc);
-                const cities = affectedCities(alert.properties.areaDesc);
-                const expires = new Date(alert.properties.expires).toLocaleTimeString(
-                  "en-US",
-                  { hour: "2-digit", minute: "2-digit", timeZone: "America/Denver" }
-                );
 
-                return (
-                  <div
-                    key={alert.properties.id}
-                    className="bg-gray-900 border border-red-700/50 rounded-2xl p-5"
-                  >
-                    <div className="flex items-start justify-between gap-3 mb-4">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <span className="bg-red-900/60 text-red-300 text-xs font-bold px-2 py-0.5 rounded-full">
-                            {alert.properties.event.toUpperCase()}
+            {warnings.map(alert => {
+              const hailSize = extractHailSize(alert);
+              const cities = frontRangeCities(alert.properties.areaDesc);
+              const primaryCity = cities[0] || "Colorado";
+              const regions = affectedRegions(cities);
+              const leadsHere = recentLeads.filter(l => cities.some(c => l.city?.toLowerCase().includes(c.toLowerCase())));
+
+              return (
+                <div key={alert.properties.id} className="bg-gray-900 border border-red-700/40 rounded-2xl p-5 mb-4">
+                  <div className="flex items-start justify-between gap-3 mb-4">
+                    <div>
+                      <div className="flex flex-wrap gap-1.5 mb-1.5">
+                        <span className="bg-red-900/60 text-red-300 text-xs font-bold px-2 py-0.5 rounded-full">
+                          {alert.properties.event.toUpperCase()}
+                        </span>
+                        {hailSize && (
+                          <span className="bg-orange-900/60 text-orange-300 text-xs font-bold px-2 py-0.5 rounded-full">
+                            {hailSize} HAIL
                           </span>
-                          {hailSize && (
-                            <span className="bg-orange-900/60 text-orange-300 text-xs font-semibold px-2 py-0.5 rounded-full">
-                              {hailSize} HAIL
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-gray-400 text-xs">
-                          {timeAgo(alert.properties.sent)} • Expires {expires} MT
-                        </p>
+                        )}
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-green-400 text-xs">Your opportunity</p>
-                        <p className="text-green-300 font-bold text-lg">$500–$3,000</p>
-                      </div>
+                      <p className="text-gray-400 text-xs">{timeAgo(alert.properties.sent)}</p>
                     </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs text-gray-500">opportunity</p>
+                      <p className="text-green-400 font-bold">$500–$3K</p>
+                    </div>
+                  </div>
 
+                  {/* Affected cities */}
+                  <div className="flex flex-wrap gap-1.5 mb-4">
+                    {cities.map(c => (
+                      <span key={c} className="bg-gray-800 text-gray-200 text-xs px-2.5 py-1 rounded-lg font-medium">{c}</span>
+                    ))}
+                  </div>
+
+                  {/* Recent leads in this area */}
+                  {leadsHere.length > 0 && (
+                    <div className="bg-amber-950/30 border border-amber-800/30 rounded-xl px-3 py-2 mb-4">
+                      <p className="text-amber-400 text-xs font-semibold mb-1">
+                        {leadsHere.length} existing lead{leadsHere.length > 1 ? "s" : ""} in this area — re-engagement SMS sent automatically
+                      </p>
+                      <p className="text-gray-500 text-xs">
+                        {leadsHere.slice(0, 3).map(l => l.name || "Lead").join(", ")}{leadsHere.length > 3 ? ` +${leadsHere.length - 3} more` : ""}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Community groups for affected regions */}
+                  {regions.length > 0 && (
                     <div className="mb-4">
-                      <p className="text-gray-500 text-xs mb-2">Affected areas:</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {cities.map(c => (
-                          <span key={c} className="bg-gray-800 text-gray-300 text-xs px-2.5 py-1 rounded-lg">
-                            {c}
-                          </span>
+                      <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-2">Post to these groups now</p>
+                      <div className="space-y-1.5">
+                        {regions.flatMap(r => r.groups).map(g => (
+                          <div key={g.name} className="flex items-center justify-between bg-gray-800 rounded-xl px-3 py-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className={`text-xs font-semibold px-1.5 py-0.5 rounded shrink-0 ${PLATFORM_COLOR[g.platform]}`}>
+                                {g.platform}
+                              </span>
+                              <span className="text-white text-xs font-medium truncate">{g.name}</span>
+                              <span className="text-gray-600 text-xs shrink-0 hidden sm:inline">{g.desc}</span>
+                            </div>
+                            <a href={g.url} target="_blank" rel="noopener noreferrer"
+                               className="bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold px-3 py-1.5 rounded-lg transition-colors shrink-0 ml-2">
+                              Open →
+                            </a>
+                          </div>
                         ))}
                       </div>
                     </div>
+                  )}
 
-                    <div className="space-y-3">
-                      <CopyBlock
-                        label="Nextdoor Post (highest close rate)"
-                        content={nextdoorPost(city, hailSize)}
-                      />
-                      <CopyBlock
-                        label="Facebook / Instagram Post"
-                        content={facebookPost(city, hailSize)}
-                      />
-                      <CopyBlock
-                        label="Facebook Ad Copy + Targeting Notes"
-                        content={adHeadline(city, hailSize)}
-                      />
-                    </div>
+                  {/* Copy-ready posts for primary city */}
+                  <div className="space-y-2">
+                    <CopyBlock label={`Nextdoor — ${primaryCity} (20–35% close rate)`} content={nextdoorPost(primaryCity, hailSize)} />
+                    <CopyBlock label={`Facebook Post — ${primaryCity}`} content={facebookPost(primaryCity, hailSize)} />
+                    <CopyBlock label="Quick Comment (reply to existing threads)" content={commentTemplate(primaryCity)} />
+                    <CopyBlock label="DM Template (send to anyone who engages)" content={dmTemplate(primaryCity)} />
                   </div>
-                );
-              })}
-            </div>
-          </div>
+                </div>
+              );
+            })}
+          </section>
         )}
 
-        {/* Other active alerts (wind, tornado) */}
-        {otherAlerts.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-yellow-400 font-semibold text-sm uppercase tracking-wide mb-3">
-              Other Active Alerts (Lower Priority)
-            </h2>
-            <div className="space-y-3">
-              {otherAlerts.map(alert => (
-                <div
-                  key={alert.properties.id}
-                  className="bg-gray-900 border border-yellow-800/40 rounded-xl p-4"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="bg-yellow-900/50 text-yellow-300 text-xs font-semibold px-2 py-0.5 rounded-full">
-                        {alert.properties.event}
-                      </span>
-                      <p className="text-gray-400 text-xs mt-1">
-                        {affectedCities(alert.properties.areaDesc).join(" • ")}
-                      </p>
+        {/* ── NEIGHBORHOOD SATURATION ──────────────────────────────────────────── */}
+        {neighborhoodScores.length > 0 && (
+          <section className="mb-8">
+            <h2 className="text-white font-bold mb-1">Where to Focus</h2>
+            <p className="text-gray-500 text-xs mb-3">Ranked by hail severity + historical leads + completed jobs. Work top to bottom.</p>
+            <div className="space-y-2">
+              {neighborhoodScores.map((n, i) => (
+                <div key={n.city} className={`flex items-center gap-3 rounded-xl px-4 py-3 border ${
+                  n.priority === "high" ? "bg-gray-900 border-red-700/30" :
+                  n.priority === "medium" ? "bg-gray-900 border-amber-700/20" :
+                  "bg-gray-900 border-gray-800"
+                }`}>
+                  <div className="text-gray-600 font-mono text-xs w-4 shrink-0">{i + 1}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-white font-semibold text-sm">{n.city}</span>
+                      <span className={`text-xs font-bold ${
+                        n.priority === "high" ? "text-red-400" :
+                        n.priority === "medium" ? "text-amber-400" : "text-gray-500"
+                      }`}>{n.priority.toUpperCase()}</span>
                     </div>
-                    <p className="text-gray-500 text-xs">{timeAgo(alert.properties.sent)}</p>
+                    <p className="text-gray-500 text-xs mt-0.5">{n.reasoning}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className={`text-xl font-black ${
+                      n.score >= 65 ? "text-red-400" : n.score >= 40 ? "text-amber-400" : "text-gray-500"
+                    }`}>{n.score}</p>
+                    <p className="text-gray-600 text-xs">/100</p>
                   </div>
                 </div>
               ))}
             </div>
-          </div>
+          </section>
         )}
 
-        {/* No active alerts state */}
-        {alerts.length === 0 && (
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-8 text-center mb-8">
-            <div className="text-4xl mb-3">✓</div>
-            <h2 className="text-white font-bold mb-1">No Active Severe Alerts</h2>
-            <p className="text-gray-400 text-sm">
-              No active severe weather in Colorado right now. Check back during storm season (May–September).
-              Use the templates below to post after any storm, even without a NWS alert.
-            </p>
-          </div>
-        )}
-
-        {/* Always-ready templates */}
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 mb-6">
-          <h2 className="text-white font-bold mb-1">Always-Ready Templates</h2>
-          <p className="text-gray-400 text-xs mb-4">
-            Use these any time you hear about hail or storms — even without an NWS alert active.
-            Replace [CITY] with the actual area.
-          </p>
-          <div className="space-y-3">
-            <CopyBlock
-              label="General Nextdoor Post (Any Storm)"
-              content={nextdoorPost("[CITY]", null)}
-            />
-            <CopyBlock
-              label="General Facebook Post"
-              content={facebookPost("[CITY]", null)}
-            />
-            <CopyBlock
-              label="Facebook Ad — Generic Hail Season"
-              content={`Colorado Homeowners: Free Roof Inspection — We Find Damage You Can't See
-
-65% of our inspections find hail damage the homeowner didn't know was there. Average insurance claim: $9,000–$22,000.
-
-You only pay your deductible. We handle everything else.
-
-✓ BBB A+ Rated   ✓ Free Same-Day Inspection   ✓ We Handle All Insurance Paperwork
-
-[YOUR LINK] | (720) 766-1518
-
-Target: Colorado homeowners, 30–65 years old, $60K+ HHI
-Budget: Start at $10/day, scale what's working`}
-            />
-          </div>
-        </div>
-
-        {/* Facebook ad targeting guide */}
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 mb-6">
-          <h2 className="text-white font-bold mb-4">Facebook Ad Setup — Storm Mode</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-            <div>
-              <p className="text-amber-400 font-semibold text-xs uppercase tracking-wide mb-2">When to run</p>
-              <ul className="text-gray-300 space-y-1 text-xs">
-                <li>• Within 6 hours of storm hitting</li>
-                <li>• Competition increases fast after 24 hrs</li>
-                <li>• Run for 48–72 hrs post-storm</li>
-              </ul>
+        {/* ── STORM WATCHES ─────────────────────────────────────────────────────�� */}
+        {watches.length > 0 && (
+          <section className="mb-8">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              <h2 className="text-amber-400 font-bold text-sm uppercase tracking-wide">
+                {watches.length} Watch — Storm Possible in 2–12 Hours. Prep Now.
+              </h2>
             </div>
-            <div>
-              <p className="text-amber-400 font-semibold text-xs uppercase tracking-wide mb-2">Targeting</p>
-              <ul className="text-gray-300 space-y-1 text-xs">
-                <li>• Zip codes in affected area ±10 miles</li>
-                <li>• Homeowners, ages 30–65</li>
-                <li>• Household income $60K+</li>
-                <li>• Objective: Leads or Traffic</li>
-              </ul>
-            </div>
-            <div>
-              <p className="text-amber-400 font-semibold text-xs uppercase tracking-wide mb-2">Budget</p>
-              <ul className="text-gray-300 space-y-1 text-xs">
-                <li>• Start: $200–500 first 48 hours</li>
-                <li>• Scale if cost/lead under $25</li>
-                <li>• Stop if cost/lead over $40</li>
-              </ul>
-            </div>
-            <div>
-              <p className="text-amber-400 font-semibold text-xs uppercase tracking-wide mb-2">Your math</p>
-              <ul className="text-gray-300 space-y-1 text-xs">
-                <li>• $15 avg cost/lead from Facebook</li>
-                <li>• 10–15% close rate = $100/job</li>
-                <li>• $300 ad spend → ~20 leads → 2–3 jobs</li>
-                <li>• <span className="text-green-400 font-semibold">$200–300 profit per storm event</span></li>
-              </ul>
-            </div>
-          </div>
-        </div>
 
-        {/* Nextdoor tips */}
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 mb-6">
-          <h2 className="text-white font-bold mb-3">Nextdoor Playbook</h2>
-          <div className="space-y-2 text-xs text-gray-400">
-            <p>• <span className="text-gray-200">Post as yourself</span>, not as a business — Nextdoor penalizes obvious ads</p>
-            <p>• <span className="text-gray-200">Reference the specific storm</span> that just happened ("last night&apos;s storm," "this morning&apos;s hail")</p>
-            <p>• <span className="text-gray-200">Join 5–10 neighborhood groups</span> in Front Range cities before storm season so you can post immediately</p>
-            <p>• <span className="text-gray-200">Post within 12 hours</span> of a storm for maximum visibility</p>
-            <p>• Cost: $0. Close rate from Nextdoor: typically 20–35% (they&apos;re warm, local, and already thinking about it)</p>
-          </div>
-        </div>
+            {watches.map(alert => {
+              const cities = frontRangeCities(alert.properties.areaDesc);
+              const regions = affectedRegions(cities);
 
-        {/* ── COMMUNITY GROUP DIRECTORY ── */}
-        {/* Join these BEFORE storm season so you can post immediately when hail hits */}
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 mb-6">
-          <h2 className="text-white font-bold mb-1">Community Group Directory</h2>
-          <p className="text-gray-400 text-xs mb-5">
-            Join all of these <span className="text-white font-semibold">before</span> storm season.
-            When hail hits, click Open → paste your post → done. Speed is everything.
-          </p>
+              return (
+                <div key={alert.properties.id} className="bg-gray-900 border border-amber-700/30 rounded-2xl p-5 mb-4">
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    <span className="bg-amber-900/50 text-amber-300 text-xs font-bold px-2 py-0.5 rounded-full">
+                      {alert.properties.event.toUpperCase()}
+                    </span>
+                    <span className="text-gray-500 text-xs self-center">{timeAgo(alert.properties.sent)}</span>
+                  </div>
 
-          {COMMUNITY_GROUPS.map(city => (
-            <div key={city.city} className="mb-5 last:mb-0">
-              <p className="text-amber-400 text-xs font-bold uppercase tracking-wide mb-2">{city.city}</p>
-              <div className="space-y-2">
-                {city.groups.map(g => (
-                  <div key={g.name} className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-2.5">
-                    <div>
-                      <p className="text-white text-sm font-medium">{g.name}</p>
-                      <p className="text-gray-500 text-xs">{g.platform} • {g.description}</p>
+                  <div className="flex flex-wrap gap-1.5 mb-4">
+                    {cities.map(c => (
+                      <span key={c} className="bg-gray-800 text-gray-300 text-xs px-2.5 py-1 rounded-lg">{c}</span>
+                    ))}
+                  </div>
+
+                  {/* Prep checklist */}
+                  <div className="bg-amber-950/20 border border-amber-800/20 rounded-xl px-4 py-3 mb-4">
+                    <p className="text-amber-300 text-xs font-bold mb-2">Prep checklist — do this now, before the storm</p>
+                    <ul className="space-y-1 text-xs text-gray-400">
+                      <li>□ Join any affected Facebook groups you're not already in</li>
+                      <li>□ Draft your Nextdoor post (copy template below, fill in city)</li>
+                      <li>□ Set up Facebook ad targeting (affected ZIP codes, ready to launch)</li>
+                      <li>□ Have your phone charged and notifications on</li>
+                    </ul>
+                  </div>
+
+                  {regions.length > 0 && (
+                    <div className="space-y-1.5">
+                      <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-1">Join these groups before the storm</p>
+                      {regions.flatMap(r => r.groups).map(g => (
+                        <div key={g.name} className="flex items-center justify-between bg-gray-800 rounded-xl px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${PLATFORM_COLOR[g.platform]}`}>{g.platform}</span>
+                            <span className="text-white text-xs">{g.name}</span>
+                          </div>
+                          <a href={g.url} target="_blank" rel="noopener noreferrer"
+                             className="bg-gray-700 hover:bg-gray-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ml-2">
+                            Join →
+                          </a>
+                        </div>
+                      ))}
                     </div>
-                    <a
-                      href={g.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs bg-amber-500 hover:bg-amber-400 text-black font-bold px-3 py-1.5 rounded-lg transition-colors shrink-0 ml-3"
-                    >
+                  )}
+                </div>
+              );
+            })}
+          </section>
+        )}
+
+        {/* ── CLEAR STATE ──────────────────────────────────────────────────────── */}
+        {warnings.length === 0 && watches.length === 0 && (
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-8 text-center mb-8">
+            <p className="text-3xl mb-3">✓</p>
+            <p className="text-white font-bold mb-1">No Active Severe Alerts</p>
+            <p className="text-gray-500 text-sm">Check back May–September. Use always-ready templates below for any storm you hear about.</p>
+          </div>
+        )}
+
+        {/* ── NEIGHBORHOOD PERFORMANCE HISTORY ─────────────────────────────────── */}
+        {cityPerformance.length > 0 && (
+          <section className="mb-8">
+            <h2 className="text-white font-bold mb-1">Where Your Leads Come From</h2>
+            <p className="text-gray-500 text-xs mb-3">Historical lead count by city — focus your storm posts here first.</p>
+            <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-800">
+                    <th className="text-left px-4 py-2.5 text-gray-500 font-medium text-xs">City</th>
+                    <th className="text-right px-4 py-2.5 text-gray-500 font-medium text-xs">Leads (2 yr)</th>
+                    <th className="text-right px-4 py-2.5 text-gray-500 font-medium text-xs">Est. Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cityPerformance.map((row, i) => (
+                    <tr key={row.city} className="border-b border-gray-800/50 last:border-0">
+                      <td className="px-4 py-2.5 text-white text-xs">
+                        {i === 0 && <span className="text-amber-400 font-bold mr-1">★</span>}
+                        {row.city}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-gray-300 text-xs">{row.count}</td>
+                      <td className="px-4 py-2.5 text-right text-green-400 font-semibold text-xs">${row.count * 100}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {/* ── ALL COMMUNITY GROUPS ─────────────────────────────────────────────── */}
+        <section className="mb-8">
+          <h2 className="text-white font-bold mb-1">All Community Groups</h2>
+          <p className="text-gray-500 text-xs mb-4">
+            Join all of these <span className="text-white font-semibold">before</span> storm season. Speed is everything after hail hits.
+          </p>
+          {ALL_GROUPS.map(region => (
+            <div key={region.region} className="mb-5">
+              <p className="text-amber-400 text-xs font-bold uppercase tracking-wide mb-2">{region.region}</p>
+              <div className="space-y-1.5">
+                {region.groups.map(g => (
+                  <div key={g.name} className="flex items-center justify-between bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded shrink-0 ${PLATFORM_COLOR[g.platform]}`}>{g.platform}</span>
+                      <span className="text-white text-sm truncate">{g.name}</span>
+                      <span className="text-gray-600 text-xs hidden sm:inline">{g.desc}</span>
+                    </div>
+                    <a href={g.url} target="_blank" rel="noopener noreferrer"
+                       className="bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold px-3 py-1.5 rounded-lg transition-colors shrink-0 ml-2">
                       Open →
                     </a>
                   </div>
@@ -463,51 +598,22 @@ Budget: Start at $10/day, scale what's working`}
               </div>
             </div>
           ))}
+        </section>
 
-          <div className="mt-4 bg-gray-800 rounded-xl p-3">
-            <p className="text-gray-400 text-xs">
-              <span className="text-white font-semibold">Tip:</span> Search Facebook for &ldquo;[city] homeowners&rdquo; or &ldquo;[city] community&rdquo; to find more groups.
-              The bigger the group, the more leads after a storm. Aim to join 15–20 groups total.
-            </p>
+        {/* ── ALWAYS-READY TEMPLATES ────────────────────────────────────────────── */}
+        <section className="mb-8">
+          <h2 className="text-white font-bold mb-1">Always-Ready Templates</h2>
+          <p className="text-gray-500 text-xs mb-4">Use any time you hear about hail — replace [CITY] with the area.</p>
+          <div className="space-y-3">
+            <CopyBlock label="Nextdoor Post (any storm)" content={nextdoorPost("[CITY]", null)} />
+            <CopyBlock label="Facebook Post (any storm)" content={facebookPost("[CITY]", null)} />
+            <CopyBlock label="Quick Comment Reply" content={commentTemplate("[CITY]")} />
+            <CopyBlock label="DM Template" content={dmTemplate("[CITY]")} />
           </div>
-        </div>
+        </section>
 
-        {/* ── REDDIT MONITORING STATUS ── */}
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            <h2 className="text-white font-bold">Reddit Monitor — Running</h2>
-          </div>
-          <p className="text-gray-400 text-xs mb-4">
-            Every 15 minutes, the system scans these subreddits for people asking about roofing, hail damage, or storm damage.
-            When found, you get a text with the direct post link so you can reply before any other contractor sees it.
-          </p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-            {["r/Denver", "r/Boulder", "r/FortCollins", "r/ColoradoSprings", "r/Longmont", "r/Colorado", "r/HomeImprovement"].map(sub => (
-              <a
-                key={sub}
-                href={`https://www.reddit.com/${sub}/new`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs px-3 py-2 rounded-lg text-center transition-colors"
-              >
-                {sub}
-              </a>
-            ))}
-          </div>
-          <div className="bg-orange-900/20 border border-orange-800/40 rounded-xl p-3">
-            <p className="text-orange-300 text-xs font-semibold mb-1">When you get a Reddit alert text:</p>
-            <ol className="text-gray-400 text-xs space-y-1 list-decimal list-inside">
-              <li>Open the link immediately — reply within the first 15 minutes</li>
-              <li>Be helpful, not salesy: &ldquo;Faraday does free inspections — happy to help you figure out if it&apos;s covered&rdquo;</li>
-              <li>DM anyone who engages with your comment</li>
-              <li>These convert at 30–50% because they&apos;re already asking</li>
-            </ol>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between text-xs text-gray-600 pt-4 border-t border-gray-800">
-          <span>Data: National Weather Service (weather.gov) • Refreshes every 5 min</span>
+        <div className="flex items-center justify-between text-xs text-gray-700 pt-4 border-t border-gray-800">
+          <span>NWS (weather.gov) • 3 min cache</span>
           <a href="/" className="hover:text-gray-400 transition-colors">← Back to site</a>
         </div>
       </div>
