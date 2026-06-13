@@ -134,8 +134,8 @@ Set complete:true ONLY when you have: service + name + phone number.`;
 
 function getClient() {
   return new OpenAI({
-    apiKey: process.env.AI_API_KEY || "no-key",
-    baseURL: process.env.AI_BASE_URL || "https://api.groq.com/openai/v1",
+    apiKey: (process.env.AI_API_KEY || "no-key").trim(),
+    baseURL: (process.env.AI_BASE_URL || "https://api.groq.com/openai/v1").trim(),
   });
 }
 
@@ -170,7 +170,7 @@ export async function POST(req: NextRequest) {
     }
 
     const client = getClient();
-    const model = process.env.AI_MODEL || "llama-3.3-70b-versatile";
+    const model = (process.env.AI_MODEL || "llama-3.3-70b-versatile").trim();
 
     // If the estimator pre-filled a service, inject it as context
     const systemContent = prefillService
@@ -216,10 +216,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(parsed);
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
     console.error("Chat API error:", error);
     return NextResponse.json(
-      { message: "Sorry, quick hiccup on my end! Can you try that again?", data: {}, complete: false, chips: [], _debug: msg },
+      { message: "Sorry, quick hiccup on my end! Can you try that again?", data: {}, complete: false, chips: [] },
       { status: 200 }
     );
   }
