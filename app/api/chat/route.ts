@@ -216,9 +216,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(parsed);
   } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
     console.error("Chat API error:", error);
     return NextResponse.json(
-      { message: "Sorry, quick hiccup on my end! Can you try that again?", data: {}, complete: false, chips: [] },
+      { message: "Sorry, quick hiccup on my end! Can you try that again?", data: {}, complete: false, chips: [], _debug: msg },
       { status: 200 }
     );
   }
