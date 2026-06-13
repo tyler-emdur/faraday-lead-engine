@@ -88,7 +88,7 @@ function tylerSms(alert: StormAlert): string {
   return [
     `⚡ STORM HIT — Post NOW`,
     `${hail.toUpperCase()} in ${cities}`,
-    `→ Full templates: [your-domain]/storm`,
+    `→ Full templates: ${process.env.NEXT_PUBLIC_SITE_URL || "https://leads.faradaysun.com"}/storm`,
     `Post to Nextdoor + FB groups within 2 hrs`,
     `Then run Facebook ad — $200-500 budget`,
   ].join("\n");
