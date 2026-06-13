@@ -22,6 +22,12 @@ export default function ExitIntentPopup() {
     if (firedRef.current) return;
     try {
       if (sessionStorage.getItem(DISMISSED_KEY)) return;
+      // Don't show if Anna already captured this lead
+      const chat = localStorage.getItem("faraday_chat_v1");
+      if (chat) {
+        const parsed = JSON.parse(chat);
+        if (parsed.saved || parsed.complete) return;
+      }
     } catch {}
     firedRef.current = true;
     setShow(true);

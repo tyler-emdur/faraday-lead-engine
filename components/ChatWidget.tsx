@@ -100,6 +100,7 @@ const INTRO_CHIPS = ["Hail/Storm damage", "Roofing", "Solar", "Windows"];
 
 interface ChatWidgetProps {
   compact?: boolean;
+  showIntelPanel?: boolean;
   source?: string;
   prefillService?: string;
   sessionKey?: string;
@@ -107,6 +108,7 @@ interface ChatWidgetProps {
 
 export default function ChatWidget({
   compact = false,
+  showIntelPanel = false,
   source = "chat",
   prefillService,
   sessionKey: customKey,
@@ -126,6 +128,7 @@ export default function ChatWidget({
   const [hydrated, setHydrated] = useState(false);
   const [currentChips, setCurrentChips] = useState<string[]>(INTRO_CHIPS);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const autoSaveRef = useRef(false);
 
@@ -198,7 +201,8 @@ export default function ChatWidget({
   }, [source]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = messagesContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [messages, loading, currentChips]);
 
   const saveLead = useCallback(async () => {
@@ -313,7 +317,7 @@ export default function ChatWidget({
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3">
           {messages.map((msg, i) => (
             <div
               key={i}
@@ -413,8 +417,8 @@ export default function ChatWidget({
         </div>
       </div>
 
-      {/* Lead Intelligence Panel — hidden on compact/mobile */}
-      {!compact && (
+      {/* Lead Intelligence Panel — internal use only, never shown on public page */}
+      {showIntelPanel && (
         <div className="hidden lg:flex flex-col w-56 gap-3">
           {/* Score */}
           <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
