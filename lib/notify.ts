@@ -1,12 +1,33 @@
 // Tyler's unified notification layer
-// Sends via SMS (Twilio) if configured, email (Resend) if configured, or both.
-// System works at full capacity with Resend alone — Twilio is optional.
+// Channels: ntfy (push), email (Resend), SMS (Twilio — optional).
 
 import { sendEmail } from "@/lib/resend";
 
+async function tryNtfy(message: string, title?: string): Promise<boolean> {
+  const token = process.env.NTFY_TOKEN;
+  const topic = (process.env.NTFY_TOPIC || "faraday-leads").trim();
+  if (!token) return false;
+  try {
+    const res = await fetch(`https://ntfy.sh/${topic}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token.trim()}`,
+        Title: title || "Faraday Lead Alert",
+        Priority: "high",
+        Tags: "bell",
+        "Content-Type": "text/plain",
+      },
+      body: message,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function trySendSMS(phone: string, message: string): Promise<boolean> {
   if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
-    return false; // Twilio not configured — skip silently
+    return false;
   }
   try {
     const { sendSMS } = await import("@/lib/twilio");
@@ -46,11 +67,13 @@ export async function notifyTyler(
 
   const tasks: Promise<unknown>[] = [];
 
+  // ntfy push notification — instant, free, no carrier registration
+  tasks.push(tryNtfy(message, subject).catch(() => {}));
+
   if (tylerPhone) {
     tasks.push(trySendSMS(tylerPhone, message).catch(() => {}));
   }
 
-  // Email always runs when Resend is available — this is the primary channel without Twilio
   if (tylerEmail) {
     tasks.push(
       sendEmail(tylerEmail, emailSubject, messageToHtml(message)).catch(e =>

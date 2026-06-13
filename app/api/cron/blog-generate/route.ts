@@ -28,8 +28,8 @@ const CITIES = [
 
 function getClient() {
   return new OpenAI({
-    apiKey: process.env.AI_API_KEY || "no-key",
-    baseURL: process.env.AI_BASE_URL || "https://api.groq.com/openai/v1",
+    apiKey: (process.env.AI_API_KEY || "no-key").trim(),
+    baseURL: (process.env.AI_BASE_URL || "https://api.groq.com/openai/v1").trim(),
   });
 }
 
@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
     }
 
     const targetKeyword = chosenKeyword.template.replace("{city}", chosenCity);
-    const model = process.env.AI_MODEL || "llama-3.3-70b-versatile";
+    const model = (process.env.AI_MODEL || "llama-3.3-70b-versatile").trim();
     const client = getClient();
 
     const completion = await client.chat.completions.create({

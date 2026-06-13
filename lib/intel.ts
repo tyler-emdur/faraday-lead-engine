@@ -204,8 +204,8 @@ export async function generateAIAnalysis(params: {
 } | null> {
   if (!process.env.AI_API_KEY) return null;
 
-  const model = process.env.AI_MODEL || "llama-3.3-70b-versatile";
-  const baseUrl = process.env.AI_BASE_URL || "https://api.groq.com/openai/v1";
+  const model = (process.env.AI_MODEL || "llama-3.3-70b-versatile").trim();
+  const baseUrl = (process.env.AI_BASE_URL || "https://api.groq.com/openai/v1").trim();
 
   const prompt = `You are a lead qualification expert for a Colorado roofing/hail damage/solar/window company.
 
@@ -230,7 +230,7 @@ Return ONLY valid JSON (no markdown, no explanation):
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.AI_API_KEY}`,
+        Authorization: `Bearer ${(process.env.AI_API_KEY || "").trim()}`,
       },
       body: JSON.stringify({
         model,
