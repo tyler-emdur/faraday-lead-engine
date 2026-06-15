@@ -75,7 +75,7 @@ async function overpassQuery(ql: string): Promise<OverpassElement[]> {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: `data=${encodeURIComponent(ql)}`,
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) continue;
       const data = await res.json() as { elements?: OverpassElement[] };
@@ -180,18 +180,21 @@ export async function GET(req: NextRequest) {
 
   const prospects: { name: string; email: string | null; phone?: string | null; website?: string | null; city?: string; type: string }[] = [];
 
-  // ── Phase 1: Overpass API (free, no key) ────────────────────────────────────
+  // ── Phase 1: Overpass API (free, no key) — run in parallel ─────────────────
   const shuffledQueries = OVERPASS_QUERIES.sort(() => Math.random() - 0.5).slice(0, 3);
 
-  for (const target of shuffledQueries) {
-    const elements = await overpassQuery(target.query);
+  const overpassResults = await Promise.allSettled(
+    shuffledQueries.map(target => overpassQuery(target.query).then(elements => ({ elements, type: target.type })))
+  );
+
+  for (const r of overpassResults) {
+    if (r.status !== "fulfilled") continue;
+    const { elements, type } = r.value;
     for (const el of elements) {
-      const p = overpassToProspect(el, target.type);
+      const p = overpassToProspect(el, type);
       if (p) prospects.push(p);
     }
     results.overpass_found += elements.length;
-    // small delay to be a good citizen
-    await new Promise(r => setTimeout(r, 500));
   }
   results.source = "overpass";
 
