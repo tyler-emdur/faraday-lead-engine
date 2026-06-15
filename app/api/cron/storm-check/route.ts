@@ -3,17 +3,27 @@
 //   1. Text Tyler immediately (formatted for action)
 //   2. Email Tyler full post templates + ad copy
 //   3. Auto-post to Facebook Page (if FACEBOOK_PAGE_ACCESS_TOKEN set)
-//   4. Re-engage past leads in the storm area via SMS (free money)
+//   4. Blast opt-in storm subscribers in the affected area
+//   5. Trigger immediate blog post (SEO — don't wait for Monday)
+//   6. Create Google Ads search campaign targeting storm-specific keywords
+//   6b. YouTube pre-roll video campaign (if GOOGLE_ADS_VIDEO_ASSET_ID set)
+//   6c. StackAdapt geofencing in storm zip codes (if STACKADAPT_API_KEY set)
+//   6d. Buffer social post queued for Instagram/Facebook/LinkedIn
+//   7. Re-engage past leads in the storm area via SMS (free money)
+//   8. Create intel opportunities per affected city
 //
 // Requires: TYLER_PHONE or TEAM_PHONE, CRON_SECRET
-// Optional: RESEND_API_KEY, FACEBOOK_PAGE_ACCESS_TOKEN + FACEBOOK_PAGE_ID, GOOGLE_SPREADSHEET_ID
+// Optional: RESEND_API_KEY, FACEBOOK_PAGE_ACCESS_TOKEN + FACEBOOK_PAGE_ID,
+//           GOOGLE_ADS_DEVELOPER_TOKEN, GOOGLE_ADS_VIDEO_ASSET_ID,
+//           STACKADAPT_API_KEY, BUFFER_ACCESS_TOKEN
 
 import { NextRequest, NextResponse } from "next/server";
 import { fetchColoradoAlerts, fetchColoradoWatches, type StormAlert } from "@/lib/nws";
 import { notifyTyler } from "@/lib/notify";
 import { sendSMS } from "@/lib/twilio";
 import { postToFacebook } from "@/lib/social";
-import { getLeadsForReengagement } from "@/lib/sheets";
+import { cronRunner } from "@/lib/logger";
+
 import { scoreOpportunity, generateAIAnalysis, saveOpportunity, opportunityExists } from "@/lib/intel";
 
 export const maxDuration = 60;
@@ -44,25 +54,35 @@ async function isAlertNew(alert: StormAlert): Promise<boolean> {
   return Date.now() - onset < WINDOW_MS;
 }
 
-async function markAlertProcessed(alert: StormAlert): Promise<void> {
+async function markAlertProcessed(alert: StormAlert, actionResults?: Record<string, unknown>): Promise<void> {
   if (!process.env.SUPABASE_URL) return;
   try {
     const { getSupabase } = await import("@/lib/supabase");
-    await getSupabase()
-      .from("storm_alerts")
-      .upsert({
-        nws_id: alert.nws_id,
-        event: alert.event,
-        headline: alert.headline,
-        severity: alert.severity,
-        areas: alert.areas,
-        affected_cities: alert.affected_cities,
-        description: alert.description,
-        onset: alert.onset,
-        expires: alert.expires,
-        has_hail: alert.has_hail,
-        posted_to_facebook: false,
-      });
+    const db = getSupabase();
+    // Write to storm_alerts (primary, for existing joins)
+    await db.from("storm_alerts").upsert({
+      nws_id: alert.nws_id,
+      event: alert.event,
+      headline: alert.headline,
+      severity: alert.severity,
+      areas: alert.areas,
+      affected_cities: alert.affected_cities,
+      description: alert.description,
+      onset: alert.onset,
+      expires: alert.expires,
+      has_hail: alert.has_hail,
+      posted_to_facebook: false,
+    });
+    // Also write to storm_events for richer tracking
+    await db.from("storm_events").upsert({
+      nws_alert_id: alert.nws_id,
+      zip_codes: alert.affected_zips || [],
+      affected_cities: alert.affected_cities,
+      hail_size: alert.hail_size_text || (alert.has_hail ? "hail" : null),
+      hail_size_inches: alert.hail_size_inches || null,
+      detected_at: new Date().toISOString(),
+      actions_triggered: actionResults || null,
+    }, { onConflict: "nws_alert_id" });
   } catch (e) {
     console.error("Failed to mark alert processed:", e);
   }
@@ -75,9 +95,8 @@ function primaryCity(alert: StormAlert): string {
 }
 
 function hailNote(alert: StormAlert): string {
-  const desc = alert.description.toLowerCase();
-  const match = desc.match(/hail(?:\s+up\s+to)?\s+(\d+(?:\.\d+)?)\s*inch/i);
-  if (match) return `${match[1]}-inch hail`;
+  if (alert.hail_size_text) return alert.hail_size_text;
+  if (alert.hail_size_inches > 0) return `${alert.hail_size_inches}-inch hail`;
   return alert.has_hail ? "hail confirmed" : "severe storm";
 }
 
@@ -196,7 +215,7 @@ CTA: "Get Free Inspection"`;
     <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;">
       <p style="margin:0;font-size:13px;color:#166534;font-weight:600;">
         Speed matters: leads that come in within 6 hours of a storm have 2–3x higher close rates.<br>
-        Post now → run the ad → check your Google Sheet for incoming leads.
+        Post now → run the ad → check your dashboard for incoming leads.
       </p>
     </div>
   </div>
@@ -211,6 +230,170 @@ CTA: "Get Free Inspection"`;
   };
 }
 
+// ─── STORM SUBSCRIBER BLAST ───────────────────────────────────────────────────
+// People who opted in via faradaysun.com/storm-alerts to get notified when hail hits
+
+function subscriberBlastSms(
+  subscriber: { name: string | null; zip: string | null },
+  city: string,
+  hailNote: string
+): string {
+  const firstName = subscriber.name?.split(" ")[0] || "there";
+  return `Hey ${firstName}! 🌧 Hail just hit ${city} — ${hailNote}. Your area may qualify for a FREE roof inspection. Insurance usually covers it 100%. Reply YES and I'll set you up with an inspector today. -Anna, Faraday Construction`;
+}
+
+async function blastStormSubscribers(
+  cities: string[]
+): Promise<number> {
+  if (!process.env.SUPABASE_URL || cities.length === 0) return 0;
+  try {
+    const { getSupabase } = await import("@/lib/supabase");
+    const citiesLower = cities.map(c => c.toLowerCase());
+
+    // Fetch opted-in subscribers near the affected cities
+    // storm_subscribers table: id, phone, name, zip, city, status, created_at
+    const { data: subscribers } = await getSupabase()
+      .from("storm_subscribers")
+      .select("phone, name, zip, city")
+      .eq("status", "active")
+      .not("phone", "is", null);
+
+    if (!subscribers?.length) return 0;
+
+    // Filter to affected area
+    const affected = subscribers.filter(s =>
+      citiesLower.some(c =>
+        (s.city || "").toLowerCase().includes(c) ||
+        citiesLower.includes((s.city || "").toLowerCase())
+      )
+    );
+
+    let sent = 0;
+    for (const sub of affected) {
+      const city = cities[0];
+      const msg = subscriberBlastSms(sub, city, "hail detected");
+      await sendSMS(sub.phone, msg).catch(e =>
+        console.error(`Subscriber blast failed for ${sub.phone}:`, e)
+      );
+      sent++;
+    }
+
+    return sent;
+  } catch (e) {
+    console.error("Subscriber blast failed:", e);
+    return 0;
+  }
+}
+
+// ─── IMMEDIATE BLOG TRIGGER ───────────────────────────────────────────────────
+// Generates a storm-specific blog post NOW instead of waiting for Monday's cron.
+// SEO content for "Westminster hail May 14" — zero competition, ranks fast.
+
+async function triggerStormBlogPost(city: string, hailNote: string, alertDate: string): Promise<boolean> {
+  if (!process.env.AI_API_KEY || !process.env.SUPABASE_URL) return false;
+
+  try {
+    const { getSupabase } = await import("@/lib/supabase");
+    const db = getSupabase();
+
+    const slug = `${city.toLowerCase().replace(/\s+/g, "-")}-hail-${alertDate.replace(/\s+/g, "-").toLowerCase()}`;
+    const { data: existing } = await db.from("blog_posts").select("id").eq("slug", slug).maybeSingle();
+    if (existing) return false; // Already published for this storm
+
+    const prompt = `Write an SEO blog post for Faraday Construction about the ${hailNote} hailstorm that just hit ${city}, Colorado on ${alertDate}.
+
+The post should:
+- Describe what happened and how to identify hail damage to a roof
+- Explain that homeowners insurance typically covers hail damage
+- Mention that claim windows close quickly (people need to act within weeks)
+- Include Faraday's free inspection offer and phone number (720) 766-1518
+- Be 500-700 words, helpful and urgent tone — this just happened
+- Use the exact phrase "${city} hail ${alertDate}" naturally in the first paragraph
+- Target homeowners who are Googling the specific storm right now
+
+Return ONLY JSON (no backticks):
+{"title":"...","meta_description":"...","slug":"${slug}","content":"..."}`;
+
+    const res = await fetch(
+      `${(process.env.AI_BASE_URL || "https://api.groq.com/openai/v1").trim()}/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${(process.env.AI_API_KEY || "").trim()}`,
+        },
+        body: JSON.stringify({
+          model: (process.env.AI_MODEL || "llama-3.3-70b-versatile").trim(),
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 2000,
+          temperature: 0.5,
+        }),
+      }
+    );
+
+    if (!res.ok) return false;
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content || "";
+    const clean = text.replace(/```json|```/g, "").trim();
+    const post = JSON.parse(clean.match(/\{[\s\S]*\}/)?.[0] || clean);
+
+    await db.from("blog_posts").insert({
+      title: post.title,
+      slug: post.slug || slug,
+      content: post.content,
+      meta_description: post.meta_description,
+      target_keyword: `${city} hail ${alertDate}`,
+      target_city: city,
+      published: true,
+      published_at: new Date().toISOString(),
+    });
+
+    console.log(`Storm blog published: ${post.title}`);
+    return true;
+  } catch (e) {
+    console.error("Storm blog generation failed:", e);
+    return false;
+  }
+}
+
+// ─── REENGAGEMENT ─────────────────────────────────────────────────────────────
+
+async function getLeadsForReengagement(
+  cities: string[]
+): Promise<{ name: string; phone: string; cityZip: string; service: string }[]> {
+  if (!process.env.SUPABASE_URL || cities.length === 0) return [];
+  try {
+    const { getSupabase } = await import("@/lib/supabase");
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: leads } = await getSupabase()
+      .from("leads")
+      .select("name, phone, city, zip, service, status")
+      .not("phone", "is", null)
+      .neq("status", "Won")
+      .gte("created_at", ninetyDaysAgo)
+      .lte("created_at", twoDaysAgo);
+
+    if (!leads) return [];
+    const citiesLower = cities.map(c => c.toLowerCase());
+    return leads
+      .filter(l => l.phone && citiesLower.some(c =>
+        (l.city || "").toLowerCase().includes(c) ||
+        (l.zip || "").includes(c)
+      ))
+      .map(l => ({
+        name: l.name || "",
+        phone: l.phone || "",
+        cityZip: [l.city, l.zip].filter(Boolean).join(" "),
+        service: l.service || "",
+      }));
+  } catch (e) {
+    console.error("Failed to get reengagement leads:", e);
+    return [];
+  }
+}
+
 // ─── MAIN CRON HANDLER ────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
@@ -219,6 +402,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const runner = cronRunner("storm-check");
+  const logId = await runner.start();
+
   const results = {
     alerts_checked: 0,
     new_hail_alerts: 0,
@@ -226,7 +412,12 @@ export async function GET(req: NextRequest) {
     tyler_sms_sent: false,
     tyler_email_sent: false,
     facebook_posted: false,
+    subscribers_blasted: 0,
     leads_reengaged: 0,
+    blog_triggered: false,
+    google_ads_created: false,
+    youtube_ad_created: false,
+    geofencing_created: false,
   };
 
   try {
@@ -236,7 +427,7 @@ export async function GET(req: NextRequest) {
     ]);
     results.alerts_checked = allAlerts.length;
 
-    // ── Pre-storm watch alerts — Front Range watches (6–24 hrs ahead) ─────────
+    // ── Pre-storm watch alerts ────────────────────────────────────────────────
     const frontRangeWatches = watchAlerts.filter(a => a.affected_cities.length > 0);
     for (const watch of frontRangeWatches) {
       const isNew = await isAlertNew(watch);
@@ -259,25 +450,26 @@ export async function GET(req: NextRequest) {
       await notifyTyler(prepSms, `⚡ Watch: ${watch.event} — ${cities}`)
         .catch(e => console.error("Watch notify failed:", e));
 
-      // Create low-priority opportunity for each affected city
       if (process.env.SUPABASE_URL) {
-        for (const city of watch.affected_cities.slice(0, 4)) {
-          const sourceId = `watch_${watch.nws_id}_${city.replace(/\s+/g, "_")}`;
-          if (await opportunityExists(sourceId)) continue;
-          await saveOpportunity({
-            source: "storm",
-            source_id: sourceId,
-            type: "storm_victim_area",
-            priority: "medium",
-            title: `Storm Watch — ${city} (${watch.event})`,
-            body: watch.headline,
-            location: city,
-            urgency_score: 45,
-            opportunity_score: 45,
-            why_it_matters: `Storm watch issued for ${city}. Storm expected in 2–12 hours. Get positioned in community groups now.`,
-            outreach_message: `Storm watch active for ${city}. Pre-stage your posts so you can publish the moment hail falls.`,
-          });
-        }
+        await Promise.allSettled(
+          watch.affected_cities.slice(0, 4).map(async (city) => {
+            const sourceId = `watch_${watch.nws_id}_${city.replace(/\s+/g, "_")}`;
+            if (await opportunityExists(sourceId)) return;
+            await saveOpportunity({
+              source: "storm",
+              source_id: sourceId,
+              type: "storm_victim_area",
+              priority: "medium",
+              title: `Storm Watch — ${city} (${watch.event})`,
+              body: watch.headline,
+              location: city,
+              urgency_score: 45,
+              opportunity_score: 45,
+              why_it_matters: `Storm watch issued for ${city}. Storm expected in 2–12 hours. Get positioned in community groups now.`,
+              outreach_message: `Storm watch active for ${city}. Pre-stage your posts so you can publish the moment hail falls.`,
+            });
+          })
+        );
       }
     }
 
@@ -291,142 +483,179 @@ export async function GET(req: NextRequest) {
       if (!isNew) continue;
 
       results.new_hail_alerts++;
-      await markAlertProcessed(alert);
 
       const affectedCities = alert.affected_cities;
+      const city = primaryCity(alert);
+      const hail = hailNote(alert);
+      const hailSizeInches = alert.hail_size_inches || 0.75;
+      const alertDate = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric" });
 
-      // ── 1 + 2. Notify Tyler (SMS if Twilio set, email always via Resend) ───
-      const { subject, html } = tylerAlertEmail(alert);
-      await notifyTyler(tylerSms(alert), subject).catch(e =>
-        console.error("Tyler storm notification failed:", e)
-      );
-      // Also send the full rich email with post templates directly
-      const tylerEmail = process.env.TYLER_EMAIL || process.env.TEAM_EMAIL;
-      if (tylerEmail) {
-        const { sendEmail } = await import("@/lib/resend");
-        await sendEmail(tylerEmail, subject, html).catch(() => {});
-        results.tyler_email_sent = true;
-      }
-      results.tyler_sms_sent = !!process.env.TWILIO_ACCOUNT_SID;
+      // ── Run all storm actions in parallel with Promise.allSettled ───────────
+      const [
+        notifyResult,
+        emailResult,
+        fbResult,
+        subscriberResult,
+        blogResult,
+        adsResult,
+        videoResult,
+        geofenceResult,
+        bufferResult,
+        reengageResult,
+        intelResult,
+      ] = await Promise.allSettled([
 
-      // ── 3. Auto-post to Facebook Page ──────────────────────────────────────
-      // Uses FACEBOOK_PAGE_ACCESS_TOKEN + FACEBOOK_PAGE_ID
-      // Tyler should set these to HIS own page credentials, not Faraday's
-      const fbPostId = await postToFacebook(facebookPagePost(alert));
-      results.facebook_posted = !!fbPostId;
-      if (fbPostId) {
-        console.log(`Facebook auto-posted for ${primaryCity(alert)}: ${fbPostId}`);
-      }
+        // 1. SMS notify Tyler
+        notifyTyler(tylerSms(alert), tylerAlertEmail(alert).subject),
 
-      // ── 4. Re-engage past leads in the storm area ──────────────────────────
-      // Reads leads from Google Sheets, finds ones in the affected cities
-      // who are 2–90 days old and haven't closed, then re-texts them
-      try {
-        const oldLeads = await getLeadsForReengagement(affectedCities);
-        const city = primaryCity(alert);
-        const hail = hailNote(alert);
+        // 2. Rich email to Tyler with post templates
+        (async () => {
+          const tylerEmail = process.env.TYLER_EMAIL || process.env.TEAM_EMAIL;
+          if (!tylerEmail) return false;
+          const { sendEmail } = await import("@/lib/resend");
+          const { html, subject } = tylerAlertEmail(alert);
+          return sendEmail(tylerEmail, subject, html);
+        })(),
 
-        for (const lead of oldLeads) {
-          const sms = reengagementSms(lead, city, hail);
-          await sendSMS(lead.phone, sms).catch(e =>
-            console.error(`Re-engagement SMS failed for ${lead.phone}:`, e)
+        // 3. Auto-post to Facebook Page
+        postToFacebook(facebookPagePost(alert)),
+
+        // 4. Blast storm subscribers
+        blastStormSubscribers(affectedCities),
+
+        // 5. Trigger storm blog post
+        triggerStormBlogPost(city, hail, alertDate),
+
+        // 6. Google Ads campaign
+        (async () => {
+          if (!process.env.GOOGLE_ADS_DEVELOPER_TOKEN) return null;
+          const { createStormCampaign } = await import("@/lib/google-ads");
+          return createStormCampaign({ city, hailNote: hail, stormDate: alertDate });
+        })(),
+
+        // 6b. YouTube pre-roll
+        (async () => {
+          if (!process.env.GOOGLE_ADS_VIDEO_ASSET_ID) return null;
+          const { createStormVideoAd } = await import("@/lib/google-ads");
+          return createStormVideoAd({ city, hailNote: hail, stormDate: alertDate });
+        })(),
+
+        // 6c. StackAdapt geofencing
+        (async () => {
+          if (!process.env.STACKADAPT_API_KEY) return null;
+          const { createGeofenceCampaign } = await import("@/lib/stackadapt");
+          return createGeofenceCampaign({ city, hailNote: hail });
+        })(),
+
+        // 6d. Buffer social post
+        (async () => {
+          if (!process.env.BUFFER_ACCESS_TOKEN) return null;
+          const { generateStormPost, queuePost } = await import("@/lib/buffer");
+          return queuePost({ text: generateStormPost(city, hail) });
+        })(),
+
+        // 7. Re-engage past leads in storm area
+        (async () => {
+          const oldLeads = await getLeadsForReengagement(affectedCities);
+          const sent: string[] = [];
+          await Promise.allSettled(
+            oldLeads.map(async (lead) => {
+              const sms = reengagementSms(lead, city, hail);
+              await sendSMS(lead.phone, sms);
+              sent.push(lead.phone);
+            })
           );
-          results.leads_reengaged++;
-        }
+          return sent.length;
+        })(),
 
-        if (oldLeads.length > 0) {
-          console.log(`Re-engaged ${oldLeads.length} past leads in ${city} area`);
-        }
-      } catch (e) {
-        console.error("Re-engagement step failed:", e);
-      }
-
-      // ── 5. Create intelligence opportunities per affected city ────────────
-      if (process.env.SUPABASE_URL) {
-        try {
+        // 8. Create intel opportunities per city
+        (async () => {
+          if (!process.env.SUPABASE_URL) return;
           const { getSupabase } = await import("@/lib/supabase");
+          const db = getSupabase();
+          const { data: stormRow } = await db.from("storm_alerts").select("id").eq("nws_id", alert.nws_id).maybeSingle();
 
-          // Get the storm_alerts row we just inserted to get its UUID
-          const { data: stormRow } = await getSupabase()
-            .from("storm_alerts")
-            .select("id")
-            .eq("nws_id", alert.nws_id)
-            .maybeSingle();
+          await Promise.allSettled(
+            affectedCities.slice(0, 6).map(async (c) => {
+              const oppSourceId = `storm_${alert.nws_id}_${c.replace(/\s+/g, "_")}`;
+              if (await opportunityExists(oppSourceId)) return;
 
-          const hailMatch = alert.description.match(/hail(?:\s+up\s+to)?\s+(\d+(?:\.\d+)?)\s*inch/i);
-          const hailSizeInches = hailMatch ? parseFloat(hailMatch[1]) : 0.75;
+              const { score, priority } = scoreOpportunity({ source: "storm", hailSizeInches, ageHours: 0 });
+              const title = `Hail hit ${c} — ${hailSizeInches >= 1 ? `${hailSizeInches}" hail` : hail}`;
+              const body = `NWS alert: ${alert.headline}. Affected area: ${alert.areas.slice(0, 200)}`;
+              const analysis = priority !== "low"
+                ? await generateAIAnalysis({ title, body, source: "storm", location: c, score, intent: "storm" })
+                : null;
 
-          for (const city of affectedCities.slice(0, 6)) {
-            const oppSourceId = `storm_${alert.nws_id}_${city.replace(/\s+/g, "_")}`;
-            if (await opportunityExists(oppSourceId)) continue;
-
-            const { score, priority } = scoreOpportunity({
-              source: "storm",
-              hailSizeInches,
-              ageHours: 0,
-            });
-
-            const title = `Hail hit ${city} — ${hailSizeInches >= 1 ? `${hailSizeInches}" hail` : hailNote(alert)}`;
-            const body = `NWS alert: ${alert.headline}. Affected area: ${alert.areas.slice(0, 200)}`;
-
-            const analysis = priority !== "low"
-              ? await generateAIAnalysis({ title, body, source: "storm", location: city, score, intent: "storm" })
-              : null;
-
-            const opp = await saveOpportunity({
-              source: "storm",
-              source_id: oppSourceId,
-              type: "storm_victim_area",
-              priority,
-              title,
-              body,
-              location: city,
-              urgency_score: score,
-              opportunity_score: score,
-              why_it_matters: analysis?.why_it_matters,
-              close_probability: analysis?.close_probability,
-              outreach_message: analysis?.outreach_message,
-              follow_up_schedule: analysis?.follow_up_schedule,
-            });
-
-            // Create storm_affected_area record
-            if (stormRow?.id) {
-              const severityScore = hailSizeInches >= 2 ? 90 : hailSizeInches >= 1.5 ? 75 : hailSizeInches >= 1 ? 60 : 40;
-              await getSupabase().from("storm_affected_areas").insert({
-                storm_alert_id: stormRow.id,
-                city,
-                hail_size_inches: hailSizeInches,
-                severity_score: severityScore,
-                impact_radius_miles: hailSizeInches >= 1.5 ? 8 : hailSizeInches >= 1 ? 5 : 3,
-                estimated_homes: Math.round(severityScore * 50),
-                opportunity_id: opp?.id ?? null,
+              const opp = await saveOpportunity({
+                source: "storm", source_id: oppSourceId, type: "storm_victim_area", priority,
+                title, body, location: c, urgency_score: score, opportunity_score: score,
+                why_it_matters: analysis?.why_it_matters,
+                close_probability: analysis?.close_probability,
+                outreach_message: analysis?.outreach_message,
+                follow_up_schedule: analysis?.follow_up_schedule,
               });
-            }
-          }
 
-          await getSupabase().from("activity_log").insert({
+              if (stormRow?.id) {
+                const severityScore = hailSizeInches >= 2 ? 90 : hailSizeInches >= 1.5 ? 75 : hailSizeInches >= 1 ? 60 : 40;
+                await db.from("storm_affected_areas").insert({
+                  storm_alert_id: stormRow.id,
+                  city: c,
+                  hail_size_inches: hailSizeInches,
+                  severity_score: severityScore,
+                  impact_radius_miles: hailSizeInches >= 1.5 ? 8 : hailSizeInches >= 1 ? 5 : 3,
+                  estimated_homes: Math.round(severityScore * 50),
+                  opportunity_id: opp?.id ?? null,
+                });
+              }
+            })
+          );
+
+          await db.from("activity_log").insert({
             type: "storm_detected",
-            description: `Hail in ${affectedCities.join(", ")} — Tyler notified, ${results.leads_reengaged} leads re-engaged`,
-            metadata: {
-              alert_id: alert.nws_id,
-              cities: affectedCities,
-              facebook_posted: results.facebook_posted,
-              leads_reengaged: results.leads_reengaged,
-            },
+            description: `Hail in ${affectedCities.join(", ")} — Tyler notified`,
+            metadata: { alert_id: alert.nws_id, cities: affectedCities },
           });
-        } catch (e) {
-          console.error("Intel opportunity creation failed:", e);
-        }
-      }
+        })(),
+      ]);
+
+      // Collect results
+      results.tyler_sms_sent = notifyResult.status === "fulfilled";
+      results.tyler_email_sent = emailResult.status === "fulfilled" && !!emailResult.value;
+      results.facebook_posted = fbResult.status === "fulfilled" && !!fbResult.value;
+      results.subscribers_blasted = subscriberResult.status === "fulfilled" ? (subscriberResult.value as number) || 0 : 0;
+      results.blog_triggered = blogResult.status === "fulfilled" && !!blogResult.value;
+      results.google_ads_created = adsResult.status === "fulfilled" && !!adsResult.value;
+      results.youtube_ad_created = videoResult.status === "fulfilled" && !!videoResult.value;
+      results.geofencing_created = geofenceResult.status === "fulfilled" && !!geofenceResult.value;
+      results.leads_reengaged = reengageResult.status === "fulfilled" ? (reengageResult.value as number) || 0 : 0;
+
+      // Log any failures
+      const failedActions = [notifyResult, emailResult, fbResult, subscriberResult, blogResult, adsResult, videoResult, geofenceResult, bufferResult, reengageResult, intelResult]
+        .filter(r => r.status === "rejected")
+        .map(r => (r as PromiseRejectedResult).reason?.message || "unknown");
+      if (failedActions.length > 0) console.error("Storm actions failed:", failedActions);
+
+      // Mark alert processed with action results
+      await markAlertProcessed(alert, {
+        tyler_notified: results.tyler_sms_sent,
+        facebook_posted: results.facebook_posted,
+        sms_blasts_sent: results.subscribers_blasted,
+        leads_reengaged: results.leads_reengaged,
+        blog_published: results.blog_triggered,
+        ads_created: results.google_ads_created,
+        geofence_created: results.geofencing_created,
+      });
 
       // Only process the first (most severe) new hail alert to avoid SMS spam
-      // if multiple alerts fire simultaneously for adjacent areas
       break;
     }
 
+    await runner.finish(logId, { actionsCount: results.new_hail_alerts + results.watch_alerts });
     console.log("Storm check:", JSON.stringify(results));
     return NextResponse.json({ success: true, ...results });
   } catch (error) {
+    await runner.finish(logId, { error: String(error) });
     console.error("Storm check cron error:", error);
     return NextResponse.json({ error: "Storm check failed" }, { status: 500 });
   }

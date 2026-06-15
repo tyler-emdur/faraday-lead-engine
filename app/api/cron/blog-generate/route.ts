@@ -1,37 +1,17 @@
 // CRON: SEO Blog Generator — Runs every Monday at 9am
-// AI-generates blog posts targeting "[city] hail damage roof repair" keywords
-// Works with any OpenAI-compatible provider: Groq, Together, OpenRouter, Ollama, etc.
+// Uses the 52-keyword rotation from lib/blog-keywords.ts.
+// Tracks position in Supabase. Anna writes 1,200–1,800 word posts.
+//
+// Requires: AI_API_KEY, SUPABASE_URL
+// Optional: CRON_SECRET (required in production)
+
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase";
-import OpenAI from "openai";
+import { generateBlogPost } from "@/lib/anna";
+import { getKeywordForWeek, BLOG_KEYWORDS } from "@/lib/blog-keywords";
+import { cronRunner } from "@/lib/logger";
 
 export const maxDuration = 60;
-
-const KEYWORD_TEMPLATES = [
-  { template: "hail damage roof repair {city} CO", service: "hail_damage" },
-  { template: "roof replacement cost {city} Colorado", service: "roofing" },
-  { template: "solar panel installation {city} Colorado", service: "solar" },
-  { template: "replacement windows {city} CO", service: "windows" },
-  { template: "storm damage roof insurance claim {city}", service: "hail_damage" },
-  { template: "how to tell if roof has hail damage {city}", service: "hail_damage" },
-  { template: "best roofing company {city} Colorado", service: "roofing" },
-  { template: "free roof inspection {city} CO", service: "roofing" },
-  { template: "energy efficient windows {city} Colorado", service: "windows" },
-  { template: "solar incentives Colorado {city} homeowners", service: "solar" },
-];
-
-const CITIES = [
-  "Denver", "Boulder", "Fort Collins", "Colorado Springs", "Longmont",
-  "Loveland", "Broomfield", "Thornton", "Arvada", "Westminster",
-  "Aurora", "Castle Rock", "Parker", "Golden", "Brighton", "Greeley",
-];
-
-function getClient() {
-  return new OpenAI({
-    apiKey: (process.env.AI_API_KEY || "no-key").trim(),
-    baseURL: (process.env.AI_BASE_URL || "https://api.groq.com/openai/v1").trim(),
-  });
-}
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -39,111 +19,91 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const db = getSupabase();
+  const runner = cronRunner("blog-generate");
+  const logId = await runner.start();
+
+  if (!process.env.AI_API_KEY) {
+    await runner.finish(logId, { error: "AI_API_KEY not set" });
+    return NextResponse.json({ success: false, message: "AI_API_KEY not set" });
+  }
 
   try {
-    const { data: existingPosts } = await db
+    const db = getSupabase();
+
+    // Get or advance keyword position
+    const { data: posRow } = await db
+      .from("activity_log")
+      .select("id, metadata")
+      .eq("type", "blog_keyword_position")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const currentPosition = (posRow?.metadata as { position?: number } | null)?.position ?? 0;
+    const nextPosition = (currentPosition + 1) % BLOG_KEYWORDS.length;
+    const keyword = getKeywordForWeek(currentPosition);
+
+    // Check if we already have a post for this keyword
+    const { data: existing } = await db
       .from("blog_posts")
-      .select("target_keyword, target_city");
+      .select("id")
+      .eq("target_keyword", keyword)
+      .maybeSingle();
 
-    const usedCombos = new Set(
-      (existingPosts || []).map((p) => `${p.target_keyword}|${p.target_city}`)
-    );
-
-    let chosenKeyword = null;
-    let chosenCity = null;
-
-    for (const kw of KEYWORD_TEMPLATES) {
-      for (const city of CITIES) {
-        if (!usedCombos.has(`${kw.template}|${city}`)) {
-          chosenKeyword = kw;
-          chosenCity = city;
-          break;
-        }
-      }
-      if (chosenKeyword) break;
+    if (existing) {
+      // Already published — advance and pick next
+      await db.from("activity_log").insert({
+        type: "blog_keyword_position",
+        description: `Blog keyword rotated to position ${nextPosition}`,
+        metadata: { position: nextPosition },
+      });
+      await runner.finish(logId, { metadata: { skipped: keyword, reason: "already published" } });
+      return NextResponse.json({ success: true, skipped: keyword, nextKeyword: getKeywordForWeek(nextPosition) });
     }
 
-    if (!chosenKeyword || !chosenCity) {
-      return NextResponse.json({ success: true, message: "All keyword combinations used" });
+    // Generate the blog post
+    const post = await generateBlogPost(keyword, "Colorado");
+
+    if (!post.content) {
+      await runner.finish(logId, { error: "Blog generation returned empty content" });
+      return NextResponse.json({ success: false, error: "Empty content" }, { status: 500 });
     }
 
-    const targetKeyword = chosenKeyword.template.replace("{city}", chosenCity);
-    const model = (process.env.AI_MODEL || "llama-3.3-70b-versatile").trim();
-    const client = getClient();
+    // Save to database
+    const { error: insertErr } = await db.from("blog_posts").upsert({
+      title: post.title,
+      slug: post.slug,
+      content: post.content,
+      meta_description: post.metaDescription,
+      target_keyword: post.keyword,
+      published: true,
+      published_at: new Date().toISOString(),
+    }, { onConflict: "slug" });
 
-    const completion = await client.chat.completions.create({
-      model,
-      max_tokens: 2000,
-      messages: [
-        {
-          role: "system",
-          content: `You are an SEO content writer for Faraday Construction, a roofing, solar, and windows company in Colorado. Write helpful, informative blog posts that rank on Google and naturally lead readers to contact Faraday for a free inspection.
-
-RULES:
-- Write 600-900 words
-- Use the target keyword naturally 3-5 times
-- Include the city name naturally throughout
-- Be genuinely helpful — not spammy or keyword-stuffed
-- Include a clear call-to-action at the end mentioning free inspections
-- Mention insurance coverage where relevant (hail/storm posts)
-- Use a warm, knowledgeable tone
-- Do NOT use asterisks, markdown bold, or formatting — just plain paragraph text with line breaks
-
-Respond ONLY with JSON (no backticks, no markdown):
-{"title":"Post Title","meta_description":"155 char meta description","slug":"url-friendly-slug","content":"Full blog post content with paragraphs separated by double newlines"}`,
-        },
-        {
-          role: "user",
-          content: `Write a blog post targeting: "${targetKeyword}"
-City: ${chosenCity}, Colorado
-Service: ${chosenKeyword.service}
-Company: Faraday Construction
-Phone: ${process.env.NEXT_PUBLIC_COMPANY_PHONE || "(303) 555-0123"}`,
-        },
-      ],
-    });
-
-    const text = completion.choices[0]?.message?.content || "";
-    const clean = text.replace(/```json|```/g, "").trim();
-    let post;
-    try {
-      post = JSON.parse(clean);
-    } catch {
-      const match = clean.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error(`AI returned unparseable response: ${clean.slice(0, 200)}`);
-      post = JSON.parse(match[0]);
+    if (insertErr) {
+      await runner.finish(logId, { error: insertErr.message });
+      return NextResponse.json({ success: false, error: insertErr.message }, { status: 500 });
     }
 
-    const { data: saved } = await db
-      .from("blog_posts")
-      .insert({
-        title: post.title,
-        slug: post.slug,
-        content: post.content,
-        meta_description: post.meta_description,
-        target_keyword: chosenKeyword.template,
-        target_city: chosenCity,
-        published: true,
-        published_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
-
+    // Advance keyword position
     await db.from("activity_log").insert({
-      type: "blog_published",
-      description: `Published: "${post.title}" targeting "${targetKeyword}"`,
-      metadata: { post_id: saved?.id, keyword: targetKeyword, city: chosenCity },
+      type: "blog_keyword_position",
+      description: `Blog post published: "${post.title}"`,
+      metadata: { position: nextPosition, keyword, slug: post.slug },
     });
 
-    console.log(`Blog post generated: "${post.title}" → /${post.slug}`);
+    await runner.finish(logId, { actionsCount: 1, metadata: { keyword, slug: post.slug, title: post.title } });
+    console.log(`Blog post published: ${post.title} (slug: ${post.slug})`);
 
     return NextResponse.json({
       success: true,
-      post: { title: post.title, slug: post.slug, keyword: targetKeyword },
+      post: { title: post.title, slug: post.slug, keyword },
+      nextKeyword: getKeywordForWeek(nextPosition),
     });
-  } catch (error) {
-    console.error("Blog generation error:", error);
-    return NextResponse.json({ error: "Blog generation failed" }, { status: 500 });
+  } catch (e) {
+    const err = e instanceof Error ? e.message : String(e);
+    await runner.finish(logId, { error: err });
+    console.error("blog-generate cron error:", e);
+    return NextResponse.json({ success: false, error: err });
   }
 }

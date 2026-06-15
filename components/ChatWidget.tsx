@@ -348,7 +348,7 @@ export default function ChatWidget({
           )}
 
           {/* Quick-reply chips */}
-          {currentChips.length > 0 && !loading && !saved && (
+          {currentChips.length > 0 && !loading && (
             <div className="flex flex-wrap gap-2 pt-1">
               {currentChips.map((chip) => (
                 <button
@@ -403,12 +403,12 @@ export default function ChatWidget({
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && sendMessage()}
               placeholder="Type a message..."
-              disabled={loading || saved}
+              disabled={loading}
               className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-amber-500/60 disabled:opacity-50"
             />
             <button
               onClick={() => sendMessage()}
-              disabled={loading || !input.trim() || saved}
+              disabled={loading || !input.trim()}
               className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-4 py-2.5 rounded-xl text-sm transition-colors disabled:opacity-40"
             >
               Send

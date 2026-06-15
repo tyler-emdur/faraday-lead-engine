@@ -11,6 +11,7 @@ interface EstimatorState {
   insuranceStatus: string;
   name: string;
   phone: string;
+  city: string;
   submitted: boolean;
   submitting: boolean;
 }
@@ -64,6 +65,7 @@ export default function InsuranceEstimator() {
     insuranceStatus: "",
     name: "",
     phone: "",
+    city: "",
     submitted: false,
     submitting: false,
   });
@@ -101,6 +103,7 @@ export default function InsuranceEstimator() {
         body: JSON.stringify({
           name: state.name || undefined,
           phone: state.phone || undefined,
+          city: state.city || undefined,
           service: "hail_damage",
           insurance_filed: state.insuranceStatus === "filed" ? "true" : state.insuranceStatus === "planning" ? "planning_to" : "false",
           urgency: state.damageIndicators.includes("interior") ? "emergency" : "immediate",
@@ -333,6 +336,13 @@ export default function InsuranceEstimator() {
                   className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-amber-500/60"
                 />
                 <input
+                  type="text"
+                  placeholder="Your city (e.g. Boulder, Denver)"
+                  value={state.city}
+                  onChange={(e) => setField("city", e.target.value)}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-amber-500/60"
+                />
+                <input
                   type="tel"
                   placeholder="Phone number (for your free inspection)"
                   value={state.phone}
@@ -376,6 +386,13 @@ export default function InsuranceEstimator() {
             placeholder="Your first name"
             value={state.name}
             onChange={(e) => setField("name", e.target.value)}
+            className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-amber-500/60"
+          />
+          <input
+            type="text"
+            placeholder="Your city (e.g. Boulder, Denver)"
+            value={state.city}
+            onChange={(e) => setField("city", e.target.value)}
             className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-amber-500/60"
           />
           <input

@@ -1,14 +1,12 @@
 // POST /api/leads — Save a captured lead
 // GET  /api/leads — Fetch leads (used by admin dashboard)
 //
-// Primary storage: Google Sheets (Tyler's billing record — always runs)
-// Secondary storage: Supabase (optional — skipped if SUPABASE_URL is not set)
-// Notification: Tyler gets an instant SMS, lead gets a confirmation SMS
+// Storage: Supabase (source of truth)
+// Notification: Tyler via ntfy push + email (Resend); lead gets confirmation email
 
 import { NextRequest, NextResponse } from "next/server";
 import { scoreLead, gradeLead } from "@/lib/scoring";
 import { notifyTyler, confirmLead } from "@/lib/notify";
-import { appendLeadToSheet } from "@/lib/sheets";
 import { normalizePhone } from "@/lib/phone";
 
 // Simple in-memory rate limiter: max 5 lead submissions per IP per 10 minutes
@@ -167,11 +165,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ── GOOGLE SHEETS (always runs — Tyler's billing record) ──
-    appendLeadToSheet(lead).catch(e =>
-      console.error("Google Sheets append failed:", e)
-    );
-
     // ── NOTIFICATIONS (fire and forget — never block the response) ──
     const serviceLabel: Record<string, string> = {
       hail_damage: "Hail Damage", roofing: "Roofing",
@@ -221,7 +214,7 @@ export async function GET(req: NextRequest) {
   // Admin dashboard requires Supabase
   if (!process.env.SUPABASE_URL) {
     return NextResponse.json(
-      { leads: [], note: "Supabase not configured — check Google Sheets for leads" },
+      { leads: [], note: "Supabase not configured" },
       { status: 200 }
     );
   }

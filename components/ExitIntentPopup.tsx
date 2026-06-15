@@ -6,6 +6,7 @@ import { getUtm, utmToSource, utmToSourceDetail } from "@/lib/utm";
 const DISMISSED_KEY = "faraday_exit_dismissed";
 
 export default function ExitIntentPopup() {
+  return null;
   const [show, setShow] = useState(false);
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");

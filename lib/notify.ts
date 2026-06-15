@@ -4,19 +4,20 @@
 import { sendEmail } from "@/lib/resend";
 
 async function tryNtfy(message: string, title?: string): Promise<boolean> {
-  const token = process.env.NTFY_TOKEN;
-  const topic = (process.env.NTFY_TOPIC || "faraday-leads").trim();
-  if (!token) return false;
+  const topic = (process.env.NTFY_TOPIC || "").trim();
+  if (!topic) return false;
+  const token = process.env.NTFY_TOKEN?.trim();
   try {
+    const headers: Record<string, string> = {
+      Title: title || "Faraday Lead Alert",
+      Priority: "high",
+      Tags: "bell",
+      "Content-Type": "text/plain",
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch(`https://ntfy.sh/${topic}`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token.trim()}`,
-        Title: title || "Faraday Lead Alert",
-        Priority: "high",
-        Tags: "bell",
-        "Content-Type": "text/plain",
-      },
+      headers,
       body: message,
     });
     return res.ok;

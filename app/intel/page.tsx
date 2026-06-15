@@ -162,12 +162,16 @@ function ImportModal({ onClose, onImported }: { onClose: () => void; onImported:
 function OpportunityCard({
   opp,
   onStatusChange,
+  adminPassword,
 }: {
   opp: Opportunity;
   onStatusChange: (id: string, status: OpportunityStatus) => void;
+  adminPassword: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [outreaching, setOutreaching] = useState(false);
+  const [outreachDone, setOutreachDone] = useState(false);
 
   async function advance() {
     const currentIdx = STATUS_FLOW.indexOf(opp.status);
@@ -200,8 +204,27 @@ function OpportunityCard({
     }
   }
 
+  async function triggerOutreach() {
+    setOutreaching(true);
+    try {
+      const res = await fetch(`/api/intel/outreach/${opp.id}`, {
+        method: "POST",
+        headers: { "x-admin-password": adminPassword },
+      });
+      if (res.ok) {
+        setOutreachDone(true);
+        onStatusChange(opp.id, "contacted");
+      }
+    } finally {
+      setOutreaching(false);
+    }
+  }
+
   const nextStatus = STATUS_FLOW[STATUS_FLOW.indexOf(opp.status) + 1];
   const canAdvance = opp.status !== "won" && opp.status !== "lost" && !!nextStatus;
+  const estimatedValue = opp.close_probability != null
+    ? Math.round((opp.close_probability / 100) * 100)
+    : null;
 
   return (
     <div className={`bg-gray-900 border rounded-xl p-4 transition-opacity ${opp.status === "lost" ? "opacity-40" : ""}`}
@@ -219,6 +242,9 @@ function OpportunityCard({
             <span className="text-xs text-gray-500">
               Score {opp.opportunity_score}/100
             </span>
+            {estimatedValue != null && (
+              <span className="text-xs text-green-400 font-bold">~${estimatedValue}</span>
+            )}
             {opp.location && (
               <span className="text-xs text-gray-500">{opp.location}</span>
             )}
@@ -268,7 +294,7 @@ function OpportunityCard({
           {expanded ? "Less" : "More"}
         </button>
 
-        <div className="ml-auto flex gap-1.5">
+        <div className="ml-auto flex gap-1.5 flex-wrap justify-end">
           {opp.status !== "won" && opp.status !== "lost" && (
             <button
               onClick={markLost}
@@ -277,6 +303,18 @@ function OpportunityCard({
             >
               Lost
             </button>
+          )}
+          {opp.status === "new" && !outreachDone && (
+            <button
+              onClick={triggerOutreach}
+              disabled={outreaching}
+              className="text-xs bg-amber-600 hover:bg-amber-500 text-white font-semibold px-3 py-1 rounded-lg transition-colors disabled:opacity-50"
+            >
+              {outreaching ? "Sending..." : "Anna Outreach"}
+            </button>
+          )}
+          {outreachDone && (
+            <span className="text-xs text-amber-400 font-semibold px-2 py-1">Outreach sent ✓</span>
           )}
           {canAdvance && nextStatus && (
             <button
@@ -332,6 +370,8 @@ export default function IntelPage() {
   const [loading, setLoading] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [filter, setFilter] = useState<"all" | "new" | "active">("new");
+  const [sortBy, setSortBy] = useState<"score" | "value" | "created">("score");
+  const [sourceFilter, setSourceFilter] = useState<string>("all");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -378,11 +418,18 @@ export default function IntelPage() {
     );
   }
 
-  const filtered = opps.filter(o => {
-    if (filter === "new") return o.status === "new";
-    if (filter === "active") return !["new", "won", "lost"].includes(o.status);
-    return true;
-  });
+  const filtered = opps
+    .filter(o => {
+      if (filter === "new") return o.status === "new";
+      if (filter === "active") return !["new", "won", "lost"].includes(o.status);
+      return true;
+    })
+    .filter(o => sourceFilter === "all" || o.source === sourceFilter)
+    .sort((a, b) => {
+      if (sortBy === "value") return ((b.close_probability ?? 0) - (a.close_probability ?? 0));
+      if (sortBy === "created") return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      return (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
+    });
 
   const high = filtered.filter(o => o.priority === "high");
   const medium = filtered.filter(o => o.priority === "medium");
@@ -426,17 +473,39 @@ export default function IntelPage() {
 
         <StatsBar opps={opps} />
 
-        {/* Filter tabs */}
-        <div className="flex gap-1 mb-6 bg-gray-900 rounded-xl p-1 border border-gray-800 w-fit">
-          {(["new", "active", "all"] as const).map(f => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`px-4 py-1.5 rounded-lg text-sm font-semibold capitalize transition-colors ${filter === f ? "bg-white text-gray-900" : "text-gray-400 hover:text-white"}`}
-            >
-              {f === "new" ? "New" : f === "active" ? "In Progress" : "All"}
-            </button>
-          ))}
+        {/* Filter + sort controls */}
+        <div className="flex flex-wrap gap-2 mb-6">
+          <div className="flex gap-1 bg-gray-900 rounded-xl p-1 border border-gray-800">
+            {(["new", "active", "all"] as const).map(f => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`px-4 py-1.5 rounded-lg text-sm font-semibold capitalize transition-colors ${filter === f ? "bg-white text-gray-900" : "text-gray-400 hover:text-white"}`}
+              >
+                {f === "new" ? "New" : f === "active" ? "In Progress" : "All"}
+              </button>
+            ))}
+          </div>
+          <select
+            value={sourceFilter}
+            onChange={e => setSourceFilter(e.target.value)}
+            className="bg-gray-900 border border-gray-800 text-gray-300 text-sm rounded-xl px-3 py-1.5 outline-none"
+          >
+            <option value="all">All sources</option>
+            <option value="storm">Storm</option>
+            <option value="reddit">Reddit</option>
+            <option value="community_import">Community</option>
+            <option value="property_scan">Property</option>
+          </select>
+          <select
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value as typeof sortBy)}
+            className="bg-gray-900 border border-gray-800 text-gray-300 text-sm rounded-xl px-3 py-1.5 outline-none"
+          >
+            <option value="score">Sort: Score</option>
+            <option value="value">Sort: Est. Value</option>
+            <option value="created">Sort: Newest</option>
+          </select>
         </div>
 
         {filtered.length === 0 && !loading && (
@@ -455,7 +524,7 @@ export default function IntelPage() {
               <span className="text-xs text-gray-600">{high.length}</span>
             </div>
             <div className="space-y-3">
-              {high.map(o => <OpportunityCard key={o.id} opp={o} onStatusChange={updateStatus} />)}
+              {high.map(o => <OpportunityCard key={o.id} opp={o} onStatusChange={updateStatus} adminPassword={pw} />)}
             </div>
           </section>
         )}
@@ -469,7 +538,7 @@ export default function IntelPage() {
               <span className="text-xs text-gray-600">{medium.length}</span>
             </div>
             <div className="space-y-3">
-              {medium.map(o => <OpportunityCard key={o.id} opp={o} onStatusChange={updateStatus} />)}
+              {medium.map(o => <OpportunityCard key={o.id} opp={o} onStatusChange={updateStatus} adminPassword={pw} />)}
             </div>
           </section>
         )}
@@ -483,7 +552,7 @@ export default function IntelPage() {
               <span className="text-xs text-gray-600">{low.length}</span>
             </div>
             <div className="space-y-3">
-              {low.map(o => <OpportunityCard key={o.id} opp={o} onStatusChange={updateStatus} />)}
+              {low.map(o => <OpportunityCard key={o.id} opp={o} onStatusChange={updateStatus} adminPassword={pw} />)}
             </div>
           </section>
         )}

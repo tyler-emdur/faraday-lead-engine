@@ -1,6 +1,22 @@
 {
   "crons": [
     {
+      "path": "/api/cron/storm-check",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/reddit-monitor",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/follow-up",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/outbound-prospect",
+      "schedule": "0 9,14 * * 1-5"
+    },
+    {
       "path": "/api/cron/blog-generate",
       "schedule": "0 9 * * 1"
     },
@@ -19,6 +35,30 @@
     {
       "path": "/api/cron/permit-monitor",
       "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cron/fema-monitor",
+      "schedule": "0 8,18 * * *"
+    },
+    {
+      "path": "/api/cron/prospect-scraper",
+      "schedule": "0 6 * * 1"
+    },
+    {
+      "path": "/api/cron/bid-monitor",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/competitor-reviews",
+      "schedule": "0 7 * * 1"
+    },
+    {
+      "path": "/api/cron/listing-monitor",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/contact-form-targets",
+      "schedule": "0 7 * * 1"
     }
   ]
 }

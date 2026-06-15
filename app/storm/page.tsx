@@ -3,6 +3,7 @@
 import type { Metadata } from "next";
 import CopyBlock from "@/components/CopyBlock";
 import { scoreNeighborhoods } from "@/lib/saturation";
+import StormLiveStatus from "@/components/StormLiveStatus";
 
 export const metadata: Metadata = {
   title: "Storm War Room — Faraday Leads",
@@ -315,7 +316,7 @@ export default async function StormWarRoom() {
       <div className="max-w-4xl mx-auto">
 
         {/* Header */}
-        <div className="flex items-start justify-between mb-6">
+        <div className="flex items-start justify-between mb-4">
           <div>
             <div className="flex items-center gap-3 mb-1">
               <h1 className="text-2xl font-black text-white">Storm War Room</h1>
@@ -329,6 +330,9 @@ export default async function StormWarRoom() {
             Lead Intel →
           </a>
         </div>
+
+        {/* Live status panel — polls every 30s */}
+        <StormLiveStatus />
 
         {/* Playbook reminder */}
         <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 mb-6 text-xs text-gray-400">
