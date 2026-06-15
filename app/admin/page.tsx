@@ -360,6 +360,12 @@ export default function AdminPage() {
     if (drawerLead?.id === id) setDrawerLead(prev => prev ? { ...prev, ...updates } : null);
   };
 
+  const deleteLead = async (id: string) => {
+    await fetch(`/api/leads/${id}`, { method: "DELETE" });
+    setLeads(prev => prev.filter(l => l.id !== id));
+    if (drawerLead?.id === id) setDrawerLead(null);
+  };
+
   if (!authed) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
@@ -500,6 +506,12 @@ export default function AdminPage() {
                                 Submit
                               </button>
                             )}
+                            <button
+                              onClick={() => { if (confirm("Delete this lead?")) deleteLead(lead.id); }}
+                              className="text-xs bg-red-900/20 hover:bg-red-900/40 border border-red-900/50 text-red-500 px-2 py-1 rounded-lg transition-colors"
+                            >
+                              ✕
+                            </button>
                           </div>
                         </td>
                       </tr>
