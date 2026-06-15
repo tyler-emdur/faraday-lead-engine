@@ -1,0 +1,17 @@
+name: Outbound Prospect
+
+on:
+  schedule:
+    - cron: '0 9,14 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger outbound email engine
+        run: |
+          curl -sf -X GET \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://leads.faradaysun.com/api/cron/outbound-prospect" \
+            || echo "Request failed but continuing"

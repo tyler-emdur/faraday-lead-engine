@@ -1,0 +1,17 @@
+name: Reddit Monitor
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger reddit monitor
+        run: |
+          curl -sf -X GET \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://leads.faradaysun.com/api/cron/reddit-monitor" \
+            || echo "Request failed but continuing"

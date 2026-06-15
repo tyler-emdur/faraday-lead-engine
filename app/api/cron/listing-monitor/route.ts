@@ -1,117 +1,160 @@
 // CRON: Listing Monitor — runs daily at 9am MT
-// Watches Colorado real estate listings for:
-//   1. "Pending" status changes → email the listing agent: "same-day roof cert"
-//   2. FSBO / "Coming Soon" listings → email the seller: "don't let roof kill your deal"
+// Watches Colorado real estate listings for new Pending/Under Contract status.
+// When a home goes under contract, the home inspection almost always flags the roof.
 //
-// Both convert at high rates because there's a built-in deadline.
+// Sources:
+//   PRIMARY:  Redfin unofficial JSON API (free, no key required)
+//   FALLBACK: ATTOM Data API (ATTOM_API_KEY required)
 //
-// Requires: ATTOM_API_KEY (attomdata.com — free trial available)
-// ATTOM Data API docs: https://api.gateway.attomdata.com/
+// Actions:
+//   - Auto-emails the listing agent when email is found (Resend)
+//   - Saves to /intel for manual follow-up when no email
 
 import { NextRequest, NextResponse } from "next/server";
 import { saveOpportunity, opportunityExists } from "@/lib/intel";
 import { notifyTyler } from "@/lib/notify";
+import { sendEmail } from "@/lib/resend";
 
 export const maxDuration = 60;
 
-interface ATTOMProperty {
-  identifier?: { attomId?: number; fips?: string };
-  address?: { line1?: string; city?: string; state?: string; postal1?: string };
-  sale?: {
-    amount?: { saleamt?: number };
-    contractDate?: string;
-    listingStatus?: string;
-    listingType?: string;
-    agentName?: string;
-    agentEmail?: string;
-    agentPhone?: string;
-  };
-  building?: { size?: { grosssize?: number } };
-  lot?: { lotsize1?: number };
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://leads.faradaysun.com").trim();
+
+// ── Redfin API (free, unofficial) ────────────────────────────────────────────
+// status=2 = Under Contract / Pending on Redfin
+// Note: strip the "{}&&" JSONP prefix before parsing
+
+interface RedfinHome {
+  mlsId?: { value?: string };
+  streetLine?: { value?: string };
+  city?: string;
+  state?: string;
+  zip?: string;
+  listingPrice?: { value?: number };
+  agentName?: string;
+  agentEmail?: string;
+  officeName?: string;
+  statusDisplayValue?: string;
+  url?: string;
 }
 
-const CO_FIPS_COUNTIES = [
-  "08001", // Adams
-  "08005", // Arapahoe
-  "08013", // Boulder
-  "08031", // Denver
-  "08035", // Douglas
-  "08059", // Jefferson
-  "08069", // Larimer
-  "08123", // Weld
+interface RedfinResponse {
+  errorMessage?: string;
+  payload?: {
+    homes?: RedfinHome[];
+  };
+}
+
+// Denver/Front Range region IDs (Denver metro = 13, Boulder = 5, Fort Collins = 17)
+const REDFIN_MARKETS = [
+  { region_id: "13", market: "denver", label: "Denver Metro" },
+  { region_id: "5",  market: "boulder", label: "Boulder" },
+  { region_id: "17", market: "fort-collins", label: "Fort Collins" },
 ];
 
-async function fetchPendingListings(): Promise<ATTOMProperty[]> {
+async function fetchRedfinPending(): Promise<{ address: string; city: string; zip: string; agentName: string; agentEmail: string | null; url: string; price: number }[]> {
+  const all: { address: string; city: string; zip: string; agentName: string; agentEmail: string | null; url: string; price: number }[] = [];
+
+  for (const mkt of REDFIN_MARKETS) {
+    try {
+      const params = new URLSearchParams({
+        al: "1",
+        market: mkt.market,
+        status: "2", // pending
+        num_homes: "50",
+        uipt: "1,2,3",
+        start: "0",
+        region_type: "6",
+        region_id: mkt.region_id,
+      });
+
+      const res = await fetch(
+        `https://www.redfin.com/stingray/api/gis?${params}`,
+        {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "Accept": "application/json, text/javascript, */*",
+          },
+          signal: AbortSignal.timeout(12000),
+          next: { revalidate: 0 },
+        }
+      );
+
+      if (!res.ok) continue;
+      let text = await res.text();
+      // Redfin prepends "{}&&" to prevent JSON hijacking
+      text = text.replace(/^\{\}&&/, "");
+      const data = JSON.parse(text) as RedfinResponse;
+      const homes = data?.payload?.homes || [];
+
+      for (const home of homes) {
+        const address = home.streetLine?.value || "";
+        if (!address) continue;
+        all.push({
+          address,
+          city: home.city || mkt.label,
+          zip: home.zip || "",
+          agentName: home.agentName || "the listing agent",
+          agentEmail: home.agentEmail || null,
+          url: home.url ? `https://www.redfin.com${home.url}` : `https://www.redfin.com`,
+          price: home.listingPrice?.value || 0,
+        });
+      }
+    } catch (e) {
+      console.error(`Redfin fetch failed for ${mkt.label}:`, e);
+    }
+  }
+
+  return all;
+}
+
+// ── Auto-email to listing agent ───────────────────────────────────────────────
+
+function agentEmailHtml(agentName: string, address: string): string {
+  const firstName = agentName.split(" ")[0] || "there";
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a;">
+  <p>Hi ${firstName},</p>
+  <p>Congratulations on the offer at <strong>${address}</strong>! I noticed it just went under contract.</p>
+  <p>If the home inspector flags any roof issues — which is very common in Colorado after recent hail seasons — Faraday Construction can turn around a same-day inspection and certificate so your deal doesn't fall through.</p>
+  <p>We've helped save dozens of Colorado closings. I'd love to be a resource for you on this one and future listings.</p>
+  <p>My direct line is <strong>(720) 766-1518</strong>. Feel free to call or text me anytime.</p>
+  <p>Best,<br>Tyler Emdur<br>Faraday Construction<br>(720) 766-1518</p>
+  <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
+  <p style="font-size:12px;color:#9ca3af;">You're receiving this because your listing at ${address} recently went under contract. <a href="${SITE_URL}/unsubscribe">Unsubscribe</a></p>
+</div>`;
+}
+
+// ── ATTOM fallback (requires API key) ────────────────────────────────────────
+
+interface ATTOMProperty {
+  identifier?: { attomId?: number };
+  address?: { line1?: string; city?: string; state?: string; postal1?: string };
+  sale?: { agentName?: string; agentEmail?: string; listingStatus?: string; listingType?: string };
+}
+
+const CO_FIPS = ["08001", "08005", "08013", "08031", "08035", "08059", "08069", "08123"];
+
+async function fetchATTOMPending(): Promise<ATTOMProperty[]> {
   const apiKey = process.env.ATTOM_API_KEY;
   if (!apiKey) return [];
-
   try {
     const yesterday = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString().slice(0, 10);
-
     const params = new URLSearchParams({
-      geoIdV4: CO_FIPS_COUNTIES.slice(0, 3).join(","), // Start with top 3 counties
+      geoIdV4: CO_FIPS.slice(0, 3).join(","),
       statusChangeDate: yesterday,
       listingStatus: "Pending",
       pageSize: "50",
     });
-
     const res = await fetch(
       `https://api.gateway.attomdata.com/propertyapi/v1.0.0/sale/snapshot?${params}`,
-      {
-        headers: {
-          apikey: apiKey,
-          Accept: "application/json",
-        },
-        next: { revalidate: 0 },
-      }
+      { headers: { apikey: apiKey, Accept: "application/json" }, next: { revalidate: 0 } }
     );
-
-    if (!res.ok) {
-      console.error("ATTOM pending listings error:", res.status);
-      return [];
-    }
-
-    const data = await res.json();
-    return data.property || [];
-  } catch (e) {
-    console.error("ATTOM pending listings fetch failed:", e);
-    return [];
-  }
-}
-
-async function fetchFSBOListings(): Promise<ATTOMProperty[]> {
-  const apiKey = process.env.ATTOM_API_KEY;
-  if (!apiKey) return [];
-
-  try {
-    const params = new URLSearchParams({
-      geoIdV4: CO_FIPS_COUNTIES.slice(0, 3).join(","),
-      listingType: "FSBO",
-      pageSize: "25",
-    });
-
-    const res = await fetch(
-      `https://api.gateway.attomdata.com/propertyapi/v1.0.0/sale/snapshot?${params}`,
-      {
-        headers: { apikey: apiKey, Accept: "application/json" },
-        next: { revalidate: 0 },
-      }
-    );
-
     if (!res.ok) return [];
-    const data = await res.json();
+    const data = await res.json() as { property?: ATTOMProperty[] };
     return data.property || [];
-  } catch (e) {
-    console.error("ATTOM FSBO fetch failed:", e);
-    return [];
-  }
+  } catch { return []; }
 }
 
-function formatAddress(prop: ATTOMProperty): string {
-  const a = prop.address;
-  if (!a) return "Unknown Address";
-  return [a.line1, a.city, a.state, a.postal1].filter(Boolean).join(", ");
-}
+// ── Main handler ──────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -119,101 +162,126 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  if (!process.env.ATTOM_API_KEY) {
-    return NextResponse.json({
-      success: false,
-      message: "ATTOM_API_KEY not set — sign up at attomdata.com (free trial available)",
-    });
-  }
-
-  const results = { pending_checked: 0, fsbo_checked: 0, saved: 0 };
+  const results = { pending_checked: 0, saved: 0, emails_sent: 0, high_priority: 0 };
   const highPriorityFinds: string[] = [];
 
-  const [pendingListings, fsboListings] = await Promise.all([
-    fetchPendingListings(),
-    fetchFSBOListings(),
-  ]);
+  // ── Redfin (primary, free) ─────────────────────────────────────────────────
+  const redfinHomes = await fetchRedfinPending();
+  results.pending_checked += redfinHomes.length;
 
-  // ── Pending listings ────────────────────────────────────────────────────────
-  results.pending_checked = pendingListings.length;
-
-  for (const prop of pendingListings) {
-    const attomId = prop.identifier?.attomId;
-    if (!attomId) continue;
-
-    const sourceId = `attom_pending_${attomId}`;
+  for (const home of redfinHomes) {
+    const sourceId = `redfin_pending_${home.address.replace(/\s+/g, "_").toLowerCase()}_${home.zip}`;
     if (await opportunityExists(sourceId)) continue;
 
-    const address = formatAddress(prop);
-    const city = prop.address?.city || "Colorado";
-    const agentName = prop.sale?.agentName || "the listing agent";
-    const agentEmail = prop.sale?.agentEmail;
+    const agentEmail = home.agentEmail;
+    const firstName = home.agentName.split(" ")[0] || "";
+
+    // Auto-email the agent if we have their email and Resend is configured
+    let emailSent = false;
+    if (agentEmail && process.env.RESEND_API_KEY) {
+      emailSent = await sendEmail(
+        agentEmail,
+        `Re: ${home.address} — Roof cert if inspection flags anything`,
+        agentEmailHtml(home.agentName, home.address)
+      ).catch(() => false);
+      if (emailSent) results.emails_sent++;
+    }
 
     const opp = await saveOpportunity({
       source: "property_scan",
       source_id: sourceId,
       type: "property_target",
       priority: agentEmail ? "high" : "medium",
-      title: `Pending sale: ${address}`,
-      body: `Status changed to Pending. Agent: ${agentName}${agentEmail ? ` (${agentEmail})` : ""}. Home inspection will flag roof issues if present.`,
-      location: city,
-      urgency_score: 70,
-      opportunity_score: 70,
-      why_it_matters: `${address} just went under contract. Home inspectors almost always flag roof issues in Colorado. If we reach the agent now, we can save the deal with a same-day roof cert or repair — and that agent becomes a referral source for life.`,
+      title: `Pending sale: ${home.address}, ${home.city}`,
+      body: `Status: Pending. Agent: ${home.agentName}${agentEmail ? ` (${agentEmail})` : ""}. Price: ${home.price ? `$${home.price.toLocaleString()}` : "unknown"}.`,
+      url: home.url,
+      location: home.city,
+      zip: home.zip,
+      urgency_score: agentEmail ? 80 : 60,
+      opportunity_score: agentEmail ? 80 : 60,
+      why_it_matters: `${home.address} just went under contract. Home inspectors almost always flag Colorado roofs. Reaching the agent now — before inspection — lets Faraday save the deal and earn a referral source for life.`,
       outreach_message: agentEmail
-        ? `Hi${agentName !== "the listing agent" ? ` ${agentName.split(" ")[0]}` : ""}! I saw ${address} just went under contract — congrats! If the home inspector flags any roof issues, Faraday Construction can get out there same-day for a cert or repair. We've saved a lot of Colorado deals. (720) 766-1518`
-        : `Looking up agent contact for ${address}...`,
-      close_probability: 35,
-      follow_up_schedule: "Contact agent within 24h of status change — inspection is usually within the first week.",
+        ? `Hi${firstName ? ` ${firstName}` : ""}! I saw ${home.address} just went under contract — congrats! If the home inspector flags any roof issues, Faraday Construction can get out there same-day for a cert or repair. We've saved a lot of Colorado deals. (720) 766-1518`
+        : `Find agent for ${home.address} and call/text — deal inspection likely within 7 days.`,
+      close_probability: agentEmail ? 40 : 25,
+      follow_up_schedule: emailSent
+        ? "Email sent. Follow up in 3 days if no reply — inspection is usually within first week."
+        : "Contact agent within 24h — inspection is this week.",
     });
 
     if (opp) {
       results.saved++;
-      if (agentEmail) highPriorityFinds.push(`Pending: ${address}`);
+      if (agentEmail) {
+        results.high_priority++;
+        highPriorityFinds.push(`${home.address}, ${home.city}${emailSent ? " ✉️" : ""}`);
+      }
     }
   }
 
-  // ── FSBO listings ───────────────────────────────────────────────────────────
-  results.fsbo_checked = fsboListings.length;
+  // ── ATTOM fallback (when API key set) ──────────────────────────────────────
+  if (process.env.ATTOM_API_KEY) {
+    const attomProps = await fetchATTOMPending();
+    results.pending_checked += attomProps.length;
 
-  for (const prop of fsboListings) {
-    const attomId = prop.identifier?.attomId;
-    if (!attomId) continue;
+    for (const prop of attomProps) {
+      const attomId = prop.identifier?.attomId;
+      if (!attomId) continue;
+      const sourceId = `attom_pending_${attomId}`;
+      if (await opportunityExists(sourceId)) continue;
 
-    const sourceId = `attom_fsbo_${attomId}`;
-    if (await opportunityExists(sourceId)) continue;
+      const a = prop.address;
+      const address = [a?.line1, a?.city, a?.state, a?.postal1].filter(Boolean).join(", ");
+      const city = a?.city || "Colorado";
+      const agentName = prop.sale?.agentName || "the listing agent";
+      const agentEmail = prop.sale?.agentEmail;
 
-    const address = formatAddress(prop);
-    const city = prop.address?.city || "Colorado";
+      let emailSent = false;
+      if (agentEmail && process.env.RESEND_API_KEY) {
+        emailSent = await sendEmail(
+          agentEmail,
+          `Re: ${address} — Roof cert if inspection flags anything`,
+          agentEmailHtml(agentName, address)
+        ).catch(() => false);
+        if (emailSent) results.emails_sent++;
+      }
 
-    await saveOpportunity({
-      source: "property_scan",
-      source_id: sourceId,
-      type: "property_target",
-      priority: "medium",
-      title: `FSBO listing: ${address}`,
-      body: `For Sale By Owner — no agent, seller handles everything. Sellers on deadline convert at very high rates.`,
-      location: city,
-      urgency_score: 55,
-      opportunity_score: 55,
-      why_it_matters: `${address} is listed FSBO. Sellers are handling everything themselves and often overlook roof issues that kill deals at inspection. Time pressure is built in — they want to close fast.`,
-      outreach_message: `Hi! I noticed your home at ${address} is listed for sale. Roof issues are the #1 deal-killer in Colorado home inspections, especially after recent hail storms. Faraday Construction does free roof certs — if you get ahead of it now, it won't cost you your deal. (720) 766-1518`,
-      close_probability: 20,
-      follow_up_schedule: "Outreach within 48h of listing. Time pressure increases as they approach an offer.",
-    });
+      await saveOpportunity({
+        source: "property_scan",
+        source_id: sourceId,
+        type: "property_target",
+        priority: agentEmail ? "high" : "medium",
+        title: `Pending sale (ATTOM): ${address}`,
+        body: `Agent: ${agentName}${agentEmail ? ` (${agentEmail})` : ""}. Under contract as of today.`,
+        location: city,
+        urgency_score: agentEmail ? 75 : 60,
+        opportunity_score: agentEmail ? 75 : 60,
+        why_it_matters: `${address} just went under contract. Roof inspection window is this week.`,
+        outreach_message: agentEmail
+          ? `Hi${agentName !== "the listing agent" ? ` ${agentName.split(" ")[0]}` : ""}! Saw ${address} just went under contract. Faraday does same-day roof certs if inspector flags anything. (720) 766-1518`
+          : `Find agent for ${address} on MLS — contact immediately.`,
+        close_probability: 35,
+        follow_up_schedule: emailSent ? "Email sent. Follow up in 3 days." : "Contact agent within 24h.",
+      });
 
-    results.saved++;
+      results.saved++;
+      if (agentEmail) {
+        results.high_priority++;
+        highPriorityFinds.push(`${address}${emailSent ? " ✉️" : ""}`);
+      }
+    }
   }
 
   if (highPriorityFinds.length > 0) {
     const msg = [
-      `🏡 ${highPriorityFinds.length} PENDING SALE${highPriorityFinds.length > 1 ? "S" : ""} — Agent contact found`,
+      `🏡 ${highPriorityFinds.length} PENDING SALE${highPriorityFinds.length > 1 ? "S" : ""} — ${results.emails_sent > 0 ? `${results.emails_sent} agents auto-emailed` : "agents found"}`,
       ...highPriorityFinds.slice(0, 3).map(f => `• ${f}`),
-      `→ Email agent NOW — inspection is this week`,
+      results.emails_sent > 0
+        ? `Emails sent — follow up in 3 days if no reply`
+        : `→ Email agents NOW — inspection is this week`,
     ].join("\n");
-    await notifyTyler(msg, `🏡 Pending Listings — Act Fast`).catch(() => {});
+    await notifyTyler(msg, `🏡 Pending Listings`).catch(() => {});
   }
 
-  console.log(`Listing monitor: ${results.pending_checked} pending, ${results.fsbo_checked} FSBO, ${results.saved} saved`);
+  console.log(`Listing monitor: ${results.pending_checked} pending checked, ${results.saved} saved, ${results.emails_sent} auto-emailed`);
   return NextResponse.json({ success: true, ...results });
 }

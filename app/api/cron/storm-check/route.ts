@@ -418,6 +418,7 @@ export async function GET(req: NextRequest) {
     google_ads_created: false,
     youtube_ad_created: false,
     geofencing_created: false,
+    meta_ads_created: 0,
   };
 
   try {
@@ -501,6 +502,7 @@ export async function GET(req: NextRequest) {
         videoResult,
         geofenceResult,
         bufferResult,
+        metaAdsResult,
         reengageResult,
         intelResult,
       ] = await Promise.allSettled([
@@ -552,6 +554,42 @@ export async function GET(req: NextRequest) {
           if (!process.env.BUFFER_ACCESS_TOKEN) return null;
           const { generateStormPost, queuePost } = await import("@/lib/buffer");
           return queuePost({ text: generateStormPost(city, hail) });
+        })(),
+
+        // 6e. Meta (Facebook/Instagram) zip-targeted ads — auto-pause after 7 days
+        (async () => {
+          if (!process.env.META_ACCESS_TOKEN || !process.env.META_AD_ACCOUNT_ID) return [];
+          const { createZipAd } = await import("@/lib/meta-ads");
+          const { getSupabase } = await import("@/lib/supabase");
+          const db = getSupabase();
+
+          // Target up to 3 affected zip codes with individual $10/day ads
+          const zips = (alert.affected_zips || []).slice(0, 3);
+          if (zips.length === 0) return [];
+
+          const created: string[] = [];
+          for (const zip of zips) {
+            const adResult = await createZipAd({ zipCode: zip, city, hailNote: hail, pauseAfterDays: 7 });
+            if (adResult) {
+              // Persist for meta-ad-cleanup cron to pause later
+              if (process.env.SUPABASE_URL) {
+                const { error: adPersistErr } = await db.from("storm_facebook_ads").insert({
+                  nws_alert_id: alert.nws_id,
+                  campaign_id: adResult.campaign_id,
+                  ad_set_id: adResult.ad_set_id,
+                  ad_id: adResult.ad_id,
+                  zip_code: zip,
+                  city,
+                  daily_budget_cents: adResult.daily_budget_cents,
+                  pause_at: adResult.pause_at,
+                  status: "active",
+                });
+                if (adPersistErr) console.error("Failed to persist Meta ad:", adPersistErr.message);
+              }
+              created.push(zip);
+            }
+          }
+          return created;
         })(),
 
         // 7. Re-engage past leads in storm area
@@ -628,10 +666,11 @@ export async function GET(req: NextRequest) {
       results.google_ads_created = adsResult.status === "fulfilled" && !!adsResult.value;
       results.youtube_ad_created = videoResult.status === "fulfilled" && !!videoResult.value;
       results.geofencing_created = geofenceResult.status === "fulfilled" && !!geofenceResult.value;
+      results.meta_ads_created = metaAdsResult.status === "fulfilled" ? ((metaAdsResult.value as string[]) || []).length : 0;
       results.leads_reengaged = reengageResult.status === "fulfilled" ? (reengageResult.value as number) || 0 : 0;
 
       // Log any failures
-      const failedActions = [notifyResult, emailResult, fbResult, subscriberResult, blogResult, adsResult, videoResult, geofenceResult, bufferResult, reengageResult, intelResult]
+      const failedActions = [notifyResult, emailResult, fbResult, subscriberResult, blogResult, adsResult, videoResult, geofenceResult, bufferResult, metaAdsResult, reengageResult, intelResult]
         .filter(r => r.status === "rejected")
         .map(r => (r as PromiseRejectedResult).reason?.message || "unknown");
       if (failedActions.length > 0) console.error("Storm actions failed:", failedActions);
@@ -645,6 +684,7 @@ export async function GET(req: NextRequest) {
         blog_published: results.blog_triggered,
         ads_created: results.google_ads_created,
         geofence_created: results.geofencing_created,
+        meta_ads_created: results.meta_ads_created,
       });
 
       // Only process the first (most severe) new hail alert to avoid SMS spam

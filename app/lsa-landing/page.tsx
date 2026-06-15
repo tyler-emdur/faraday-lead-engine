@@ -1,15 +1,4 @@
-// Google Local Services Ads landing page
-// Stripped-down, high-conversion page for LSA traffic.
-// No nav, no distractions — just one CTA.
-// ?utm_source=google_lsa shows the right headline.
-
-import type { Metadata } from "next";
-
-export const metadata: Metadata = {
-  title: "Free Roof Inspection — Faraday Construction",
-  description: "Faraday Construction does FREE hail damage inspections in Colorado. Insurance usually covers 100%. Call (720) 766-1518 or request online.",
-  robots: { index: false, follow: false }, // Don't index this page — it's for paid traffic
-};
+"use client";
 
 export default function LSALandingPage() {
   const phone = "(720) 766-1518";
@@ -18,7 +7,6 @@ export default function LSALandingPage() {
     <main className="min-h-screen bg-white flex flex-col items-center justify-center p-6 font-sans">
       <div className="max-w-lg w-full text-center">
 
-        {/* Trust bar */}
         <div className="flex justify-center gap-6 mb-8 text-sm text-gray-500">
           <span>⭐ 4.9/5 Google</span>
           <span>✅ BBB A+ Rated</span>
@@ -35,7 +23,6 @@ export default function LSALandingPage() {
           from start to finish — most homeowners pay only their deductible.
         </p>
 
-        {/* Primary CTA — click-to-call */}
         <a
           href={`tel:${phone.replace(/[^\d]/g, "")}`}
           className="block w-full bg-amber-500 text-black font-black text-xl py-5 rounded-2xl mb-4 hover:bg-amber-400 transition-colors"
@@ -45,7 +32,6 @@ export default function LSALandingPage() {
 
         <p className="text-gray-400 text-sm mb-8">Available 7am – 7pm · Same-day inspections available</p>
 
-        {/* Inline form for non-callers */}
         <div className="bg-gray-50 border border-gray-200 rounded-2xl p-6 text-left">
           <h2 className="text-lg font-bold text-gray-900 mb-4 text-center">
             Or request a callback
@@ -66,36 +52,19 @@ export default function LSALandingPage() {
               f.innerHTML = `<p class="text-center text-green-700 font-bold py-4">✅ Got it! Anna will text you within 5 minutes.</p>`;
             }}
           >
-            <input
-              name="name"
-              type="text"
-              placeholder="Your name"
-              required
-              className="w-full border border-gray-300 rounded-lg px-4 py-3 text-gray-900 focus:outline-none focus:border-amber-500"
-            />
-            <input
-              name="phone"
-              type="tel"
-              placeholder="Phone number"
-              required
-              className="w-full border border-gray-300 rounded-lg px-4 py-3 text-gray-900 focus:outline-none focus:border-amber-500"
-            />
-            <input
-              name="city"
-              type="text"
-              placeholder="Your city"
-              className="w-full border border-gray-300 rounded-lg px-4 py-3 text-gray-900 focus:outline-none focus:border-amber-500"
-            />
-            <button
-              type="submit"
-              className="w-full bg-gray-900 text-white font-bold py-3.5 rounded-xl hover:bg-gray-800 transition-colors"
-            >
+            <input name="name" type="text" placeholder="Your name" required
+              className="w-full border border-gray-300 rounded-lg px-4 py-3 text-gray-900 focus:outline-none focus:border-amber-500" />
+            <input name="phone" type="tel" placeholder="Phone number" required
+              className="w-full border border-gray-300 rounded-lg px-4 py-3 text-gray-900 focus:outline-none focus:border-amber-500" />
+            <input name="city" type="text" placeholder="Your city"
+              className="w-full border border-gray-300 rounded-lg px-4 py-3 text-gray-900 focus:outline-none focus:border-amber-500" />
+            <button type="submit"
+              className="w-full bg-gray-900 text-white font-bold py-3.5 rounded-xl hover:bg-gray-800 transition-colors">
               Request Free Inspection →
             </button>
           </form>
         </div>
 
-        {/* Social proof */}
         <div className="mt-8 space-y-3 text-left">
           {[
             { name: "Michael T., Westminster", stars: 5, quote: "Faraday handled everything with our insurance. We got $19,200 covered and only paid our deductible. Highly recommend." },
