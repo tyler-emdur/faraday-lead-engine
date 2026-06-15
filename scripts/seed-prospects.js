@@ -93,7 +93,6 @@ async function seed() {
       ...p,
       email: null,
       status: 'new',
-      follow_up_count: 0,
       contact_form_queued: false,
       metadata: {},
     };

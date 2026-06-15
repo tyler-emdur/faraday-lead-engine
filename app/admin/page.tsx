@@ -75,7 +75,7 @@ interface Appointment {
   lead?: Lead;
 }
 
-type Tab = "leads" | "appointments" | "submissions" | "crons" | "storms";
+type Tab = "leads" | "submissions" | "crons" | "storms";
 
 // ─── Score badge ──────────────────────────────────────────────────────────────
 
@@ -312,7 +312,6 @@ export default function AdminPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [storms, setStorms] = useState<Storm[]>([]);
   const [cronLogs, setCronLogs] = useState<CronLog[]>([]);
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(false);
 
   // Filters
@@ -341,10 +340,6 @@ export default function AdminPage() {
         const r = await fetch("/api/admin/cron-logs");
         const d = await r.json();
         setCronLogs(d.logs || []);
-      } else if (t === "appointments") {
-        const r = await fetch("/api/admin/appointments");
-        const d = await r.json();
-        setAppointments(d.appointments || []);
       }
     } finally {
       setLoading(false);
@@ -395,7 +390,7 @@ export default function AdminPage() {
   });
 
   const submitted = leads.filter(l => l.submitted_to_faraday);
-  const TABS: Tab[] = ["leads", "appointments", "submissions", "crons", "storms"];
+  const TABS: Tab[] = ["leads", "submissions", "crons", "storms"];
 
   // Cron schedule windows (expected run intervals in minutes)
   const CRON_WINDOWS: Record<string, number> = {
@@ -519,53 +514,6 @@ export default function AdminPage() {
                   </tbody>
                 </table>
                 {filteredLeads.length === 0 && <p className="text-center py-12 text-gray-600">No leads match your filters.</p>}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* ── APPOINTMENTS ──────────────────────────────────────────────────── */}
-        {tab === "appointments" && (
-          <>
-            <h2 className="text-lg font-bold mb-4">Appointments</h2>
-            {loading ? <div className="text-center py-16 text-gray-500">Loading...</div> : (
-              <div className="space-y-3">
-                {appointments.length === 0 && <p className="text-gray-600 text-center py-12">No appointments yet.</p>}
-                {appointments.map(a => (
-                  <div key={a.id} className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center justify-between gap-4">
-                    <div>
-                      <p className="font-medium text-white">{a.lead?.name || "Unknown"}</p>
-                      <p className="text-gray-400 text-sm">{a.address}</p>
-                      <p className="text-gray-500 text-xs">
-                        {a.requested_date ? new Date(a.requested_date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : "Date TBD"}
-                        {" · "}{a.requested_time_slot || "anytime"}
-                      </p>
-                    </div>
-                    <div className="flex gap-2 flex-shrink-0">
-                      {a.cancelled ? (
-                        <span className="text-xs text-gray-500">Cancelled</span>
-                      ) : a.confirmed ? (
-                        <span className="text-xs text-green-400 bg-green-900/30 px-2 py-1 rounded">✅ Confirmed</span>
-                      ) : (
-                        <button onClick={async () => {
-                          await fetch(`/api/appointments/confirm/${a.id}`, { method: "POST" });
-                          setAppointments(prev => prev.map(ap => ap.id === a.id ? { ...ap, confirmed: true } : ap));
-                        }} className="text-xs bg-amber-500 hover:bg-amber-400 text-black font-bold px-3 py-1.5 rounded-lg transition-colors">
-                          Confirm
-                        </button>
-                      )}
-                      {!a.cancelled && (
-                        <button onClick={async () => {
-                          if (!confirm("Cancel this appointment?")) return;
-                          await fetch(`/api/appointments/cancel/${a.id}`, { method: "POST" });
-                          setAppointments(prev => prev.map(ap => ap.id === a.id ? { ...ap, cancelled: true } : ap));
-                        }} className="text-xs bg-red-900/40 hover:bg-red-900/60 border border-red-800 text-red-400 px-3 py-1.5 rounded-lg transition-colors">
-                          Cancel
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
               </div>
             )}
           </>
