@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizePhone } from "@/lib/phone";
 import { sendSMS } from "@/lib/twilio";
+import { notifyTyler } from "@/lib/notify";
 
 export async function POST(req: NextRequest) {
   try {
@@ -16,10 +17,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Valid phone number required" }, { status: 400 });
     }
 
-    // Save to storm_subscribers table
+    // Save to storm_subscribers table (best-effort — the underlying table/RPC may not exist
+    // in every environment; the leads table below is the source of truth for capture)
     if (process.env.SUPABASE_URL) {
       const { getSupabase } = await import("@/lib/supabase");
-      await getSupabase().rpc("add_storm_subscriber", {
+      const { error: rpcError } = await getSupabase().rpc("add_storm_subscriber", {
         p_phone: normalizedPhone,
         p_name: name || null,
         p_email: email || null,
@@ -27,7 +29,35 @@ export async function POST(req: NextRequest) {
         p_zip: zip || null,
         p_source: "web_optin",
       });
+      if (rpcError) console.error("add_storm_subscriber RPC failed:", rpcError.message);
+
+      // Always also capture as a lead so this never depends on storm_subscribers existing
+      try {
+        const db = getSupabase();
+        const { data: existing } = await db.from("leads").select("id").eq("phone", normalizedPhone).maybeSingle();
+        if (!existing) {
+          await db.from("leads").insert({
+            name: name || null,
+            phone: normalizedPhone,
+            email: email || null,
+            city: city || null,
+            zip: zip || null,
+            source: "storm-alerts",
+            service: "hail_damage",
+            status: "new",
+            notes: "Opted in to free hail alert SMS signups.",
+          });
+        }
+      } catch (e) {
+        console.error("Failed to save storm-alerts lead:", e);
+      }
     }
+
+    // Notify Tyler immediately — this is a captured lead regardless of subscriber-table state
+    await notifyTyler(
+      `⚡ Storm Alert Signup — $100 opportunity\n${name || "Unknown"} | ${normalizedPhone}\n${city || "Unknown city"} | wants hail alerts`,
+      `⚡ Storm Alert Signup — ${name || normalizedPhone}`
+    ).catch(e => console.error("Tyler notification failed:", e));
 
     // Send opt-in confirmation SMS
     if (process.env.TWILIO_ACCOUNT_SID) {
