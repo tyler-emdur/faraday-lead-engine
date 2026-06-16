@@ -90,15 +90,16 @@ export async function POST(req: NextRequest) {
       // No matching outreach record — still capture the lead if they gave us a phone number
       const unmatchedPhone = extractPhone(incomingText);
       if (unmatchedPhone) {
-        await db.from("leads").insert({
+        const { error: insertErr } = await db.from("leads").insert({
           name: senderEmail.split("@")[0] || "Unknown",
           phone: unmatchedPhone,
           email: senderEmail,
           source: "inbound_email_unmatched",
-          service: "roof_inspection",
+          service: "roofing",
           status: "new",
           notes: `Inbound email reply with no matching outbound record. Subject: ${payload.data.subject}\n${incomingText.slice(0, 500)}`,
         });
+        if (insertErr) console.error("Failed to save unmatched inbound lead:", insertErr.message);
 
         await notifyTyler(
           `📞 LEAD FROM EMAIL REPLY (unmatched sender)\nEmail: ${senderEmail}\nPhone: ${unmatchedPhone}\nSubject: ${payload.data.subject}`,
@@ -130,16 +131,17 @@ export async function POST(req: NextRequest) {
     // 3b. Check if the reply contains a phone number — if so, save the lead and stop
     const phone = extractPhone(incomingText);
     if (phone) {
-      await db.from("leads").insert({
+      const { error: insertErr } = await db.from("leads").insert({
         name: prospect.name || prospect.company || "Unknown",
         phone,
         email: prospect.email,
         city: prospect.city || null,
         source: "outbound_email",
-        service: "roof_inspection",
+        service: "roofing",
         status: "new",
         notes: `B2B referral reply from ${prospect.company || prospect.email}. Original message:\n${incomingText.slice(0, 500)}`,
       });
+      if (insertErr) console.error("Failed to save outbound-reply lead:", insertErr.message);
 
       await db.from("outbound_prospects").update({
         status: "won",
