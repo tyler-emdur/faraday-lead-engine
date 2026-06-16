@@ -128,7 +128,7 @@ async function fetchCityPerformance(): Promise<{ city: string; count: number }[]
 
 // ─── COMMUNITY GROUPS ─────────────────────────────────────────────────────────
 
-interface Group { name: string; platform: "Facebook" | "Nextdoor" | "Reddit"; url: string; desc: string }
+interface Group { name: string; platform: "Facebook" | "Nextdoor"; url: string; desc: string }
 
 const ALL_GROUPS: { region: string; keywords: string[]; groups: Group[] }[] = [
   {
@@ -138,7 +138,6 @@ const ALL_GROUPS: { region: string; keywords: string[]; groups: Group[] }[] = [
       { name: "Denver Community Board", platform: "Facebook", url: "https://www.facebook.com/groups/denvercommunityboard", desc: "150K+ members" },
       { name: "Denver Homeowners & Neighbors", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Denver+homeowners+Colorado", desc: "Homeowners focus" },
       { name: "Nextdoor Denver", platform: "Nextdoor", url: "https://nextdoor.com", desc: "Join your local neighborhood" },
-      { name: "r/Denver", platform: "Reddit", url: "https://reddit.com/r/Denver/new", desc: "Monitor for storm posts" },
     ],
   },
   {
@@ -148,7 +147,6 @@ const ALL_GROUPS: { region: string; keywords: string[]; groups: Group[] }[] = [
       { name: "Boulder County Community", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Boulder+Colorado+community", desc: "Boulder area hub" },
       { name: "Longmont Community Forum", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Longmont+Colorado+community", desc: "Active local group" },
       { name: "Nextdoor Boulder", platform: "Nextdoor", url: "https://nextdoor.com", desc: "Best for recommendations" },
-      { name: "r/Boulder", platform: "Reddit", url: "https://reddit.com/r/Boulder/new", desc: "Storm posts" },
     ],
   },
   {
@@ -158,7 +156,6 @@ const ALL_GROUPS: { region: string; keywords: string[]; groups: Group[] }[] = [
       { name: "Fort Collins Community Board", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Fort+Collins+community+board", desc: "Large active group" },
       { name: "Loveland Colorado Community", platform: "Facebook", url: "https://www.facebook.com/search/groups/?q=Loveland+Colorado+community", desc: "Local community" },
       { name: "Nextdoor NoCo", platform: "Nextdoor", url: "https://nextdoor.com", desc: "Northern Colorado neighborhoods" },
-      { name: "r/FortCollins", platform: "Reddit", url: "https://reddit.com/r/FortCollins/new", desc: "Storm posts" },
     ],
   },
   {
@@ -230,7 +227,6 @@ function affectedRegions(cities: string[]): typeof ALL_GROUPS[number][] {
 const PLATFORM_COLOR: Record<string, string> = {
   Facebook: "bg-blue-900/50 text-blue-300",
   Nextdoor: "bg-green-900/50 text-green-300",
-  Reddit: "bg-orange-900/50 text-orange-300",
 };
 
 // ─── POST TEMPLATES ────────────────────────────────────────────────────────────
@@ -339,7 +335,7 @@ export default async function StormWarRoom() {
           <span className="text-white font-semibold">Storm playbook: </span>
           Post Nextdoor + Facebook groups <span className="text-gray-600">(free, 20–35% close rate)</span> →
           Run $200–500 Facebook ad targeting hit ZIPs →
-          Reply to every Reddit/Nextdoor comment within 15 min →
+          Reply to every Nextdoor comment within 15 min →
           <span className="text-green-400 font-semibold"> $500–$3,000 per storm event</span>
         </div>
 

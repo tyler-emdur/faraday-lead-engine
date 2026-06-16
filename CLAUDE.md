@@ -37,7 +37,6 @@ Do not build or suggest features in these areas.
 | Cron | Schedule | Purpose |
 |------|----------|---------|
 | storm-check | 8am daily | NWS hail detection → subscriber blast + blog + Meta ads |
-| reddit-monitor | 9am daily | CO subreddits for homeowners mentioning damage |
 | blog-generate | Mon 9am | Weekly SEO blog post on hail/roofing keyword |
 | prospect-scraper | Mon 6am | Loads CO referral partners into outbound table (BROKEN — Overpass timeout) |
 | outbound-prospect | Weekdays 9am | Cold emails to B2B referral partners |
@@ -67,14 +66,13 @@ Do not build or suggest features in these areas.
 
 **Leads:** 6 total (4 chat widget, 1 website, 1 test). Delete test leads at /admin.
 
-**Outbound prospects:** 20 seeded — HOA managers, property managers, insurance agents, mortgage brokers, title companies, realtors. Emails NOT sending yet — FROM domain blocked by Wix DNS (can't verify subdomain MX records). On hold until sending domain is resolved.
+**Outbound prospects:** 20 seeded — HOA managers, property managers, insurance agents, mortgage brokers, title companies, realtors. Emails send from `anna@faradayleads.com`.
 
 **Blog:** 2 posts live. Cron generates one per Monday.
 
 **Storm monitoring:** Active every 30 min via GitHub Actions. No storms detected yet.
 
 **What's broken / on hold:**
-- Outbound email — Resend can't verify faradaysun.com (Wix DNS limitation). Fix: get a separate sending domain ($10/yr on Namecheap) or get owner approval to move DNS to Cloudflare. Don't touch company DNS without owner approval.
 - prospect-scraper — Overpass API times out from Vercel servers. Not urgent; 20 prospects already seeded.
 - competitor-reviews — needs GOOGLE_PLACES_API_KEY (requires credit card for Google Cloud)
 
@@ -83,8 +81,7 @@ Do not build or suggest features in these areas.
 ## Immediate next actions (priority order)
 
 1. **Set up Google Search Console** — verify faradaysun.com, check if blog posts are indexed. Free, 10 min. This is the only way to know if SEO is working.
-2. **Resolve sending domain** — either buy faradayleads.com (~$10) or get owner approval on Cloudflare DNS migration. Unlocks outbound email to 20 prospects.
-3. **Add TWILIO_PHONE_NUMBER to Vercel** — all SMS is broken without it. `vercel env add TWILIO_PHONE_NUMBER` then set Twilio webhook to `https://leads.faradaysun.com/api/inbound/sms`
+2. **Add TWILIO_PHONE_NUMBER to Vercel** — all SMS is broken without it. `vercel env add TWILIO_PHONE_NUMBER` then set Twilio webhook to `https://leads.faradaysun.com/api/inbound/sms`
 
 ---
 

@@ -394,7 +394,7 @@ export default function AdminPage() {
 
   // Cron schedule windows (expected run intervals in minutes)
   const CRON_WINDOWS: Record<string, number> = {
-    "storm-check": 35, "reddit-monitor": 20, "follow-up": 70,
+    "storm-check": 35, "follow-up": 70,
     "outbound-prospect": 60 * 8, "blog-generate": 60 * 24 * 7,
     "review-request": 60 * 25, "weekly-report": 60 * 24 * 7,
     "intel-digest": 60 * 25, "permit-monitor": 60 * 25,

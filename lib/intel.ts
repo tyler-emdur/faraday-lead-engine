@@ -2,7 +2,7 @@
 
 import { getSupabase } from "@/lib/supabase";
 
-export type OpportunitySource = "reddit" | "storm" | "community_import" | "property_scan";
+export type OpportunitySource = "storm" | "community_import" | "property_scan";
 export type OpportunityType = "community_post" | "storm_victim_area" | "property_target" | "referral_request";
 export type OpportunityStatus = "new" | "contacted" | "replied" | "inspection_booked" | "won" | "lost";
 export type OpportunityPriority = "high" | "medium" | "low";
@@ -146,11 +146,7 @@ export function scoreOpportunity(params: {
   let score = 0;
 
   // Source base score
-  if (params.source === "reddit") {
-    if (params.intent === "high") score += 40;
-    else if (params.intent === "medium") score += 25;
-    else score += 10;
-  } else if (params.source === "storm") {
+  if (params.source === "storm") {
     const hail = params.hailSizeInches || 0;
     if (hail >= 2.0) score += 45;
     else if (hail >= 1.5) score += 38;
@@ -355,7 +351,7 @@ export async function fetchIntelStats(): Promise<IntelStats> {
 
   const by_priority = { high: 0, medium: 0, low: 0 };
   const by_status: Record<string, number> = {};
-  const by_source = { reddit: 0, storm: 0, community_import: 0, property_scan: 0 };
+  const by_source = { storm: 0, community_import: 0, property_scan: 0 };
 
   for (const o of all) {
     by_priority[o.priority] = (by_priority[o.priority] || 0) + 1;

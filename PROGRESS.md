@@ -25,7 +25,7 @@
 | Inbound Email Router | ✅ Built | /api/inbound/email |
 | SMS notifications (Twilio) | ⏭ On hold | Shifted to Resend B2B strategy to avoid TCPA risks |
 | 5-step follow-up drip | ✅ Built | Email sequence via Supabase trigger |
-| Storm monitor cron | ✅ Built | GitHub Actions every 15 min — **needs secrets** |
+| Storm monitor cron | ✅ Built | GitHub Actions every 30 min |
 | Follow-up sender cron | ✅ Built | GitHub Actions every hour — **needs secrets** |
 | Blog generator cron | ✅ Built | GitHub Actions Monday 9am |
 | Storm tracker page (/storm) | ✅ Built | Tyler's internal tool |
@@ -43,8 +43,7 @@ When Anna captures a lead (name + phone):
 2. ntfy push → instant notification on Tyler's computer
 3. Resend email → `tgemdur01@gmail.com`
 
-Email sends from `onboarding@resend.dev` (Resend test sender). Looks slightly generic.
-To fix long-term: Faraday adds 2 DNS records in Wix to verify `faradaysun.com` with Resend.
+Email sends from `anna@faradayleads.com` (dedicated burner domain for outbound to protect main site reputation).
 
 ---
 
@@ -56,7 +55,7 @@ To fix long-term: Faraday adds 2 DNS records in Wix to verify `faradaysun.com` w
 | `AI_BASE_URL` | ✅ Set | `https://api.groq.com/openai/v1` |
 | `AI_MODEL` | ✅ Set | `llama-3.3-70b-versatile` |
 | `RESEND_API_KEY` | ✅ Set | |
-| `FROM_EMAIL` | ✅ Set | `onboarding@resend.dev` |
+| `FROM_EMAIL` | ✅ Set | `anna@faradayleads.com` |
 | `TYLER_EMAIL` | ✅ Set | `tgemdur01@gmail.com` |
 | `NTFY_TOKEN` | ✅ Set | **Rotate** — was exposed in chat |
 | `NTFY_TOPIC` | ✅ Set | `leads` |
@@ -87,7 +86,6 @@ To fix long-term: Faraday adds 2 DNS records in Wix to verify `faradaysun.com` w
 
 ### 🟢 Nice to Have
 - [ ] Real before/after photos on landing page (30–50% conversion lift)
-- [ ] Email sends from a Faraday domain instead of onboarding@resend.dev
 - [ ] Delete `app/api/debug/route.ts` (debugging remnant)
 
 ---

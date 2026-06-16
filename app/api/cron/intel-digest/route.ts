@@ -13,7 +13,6 @@ function priorityBadge(p: string) {
 }
 
 function sourceBadge(s: string) {
-  if (s === "reddit") return "Reddit";
   if (s === "storm") return "Storm";
   if (s === "community_import") return "Community";
   return "Property";

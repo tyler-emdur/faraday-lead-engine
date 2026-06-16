@@ -14,7 +14,7 @@ const PIPELINE_STAGES = [
     label: "DETECT",
     description: "Finding signals",
     crons: [
-      "storm-check", "reddit-monitor", "permit-monitor", "competitor-reviews",
+      "storm-check", "permit-monitor", "competitor-reviews",
       "listing-monitor", "hoa-violations", "hail-damage-unclaimed",
       "fema-monitor", "bid-monitor",
     ],
@@ -42,7 +42,6 @@ const PIPELINE_STAGES = [
 const CRON_JOBS = [
   // DETECT
   { name: "storm-check",           label: "Storm Monitor",          schedule: "Every 30 min",    stage: "detect" },
-  { name: "reddit-monitor",         label: "Reddit Monitor",         schedule: "Every 15 min",    stage: "detect" },
   { name: "permit-monitor",         label: "Permit Scanner",         schedule: "Daily 3pm",       stage: "detect" },
   { name: "competitor-reviews",     label: "Competitor Reviews",     schedule: "Monday 7am",      stage: "detect" },
   { name: "listing-monitor",        label: "Pending Sales",          schedule: "Daily 9am",       stage: "detect" },

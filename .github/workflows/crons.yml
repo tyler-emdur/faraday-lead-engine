@@ -14,14 +14,6 @@ jobs:
           curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/storm-check" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
 
-  reddit-monitor:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger reddit monitor
-        run: |
-          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/reddit-monitor" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
-
   follow-up:
     # Only run on the hour (minute 0 of any 15-min tick where GitHub fires at :00)
     # GitHub Actions schedule isn't exact, but close enough for follow-ups

@@ -1,7 +1,6 @@
 {
   "crons": [
     { "path": "/api/cron/storm-check",          "schedule": "0 8 * * *"   },
-    { "path": "/api/cron/reddit-monitor",        "schedule": "0 9 * * *"   },
     { "path": "/api/cron/blog-generate",         "schedule": "0 9 * * 1"   },
     { "path": "/api/cron/prospect-scraper",      "schedule": "0 6 * * 1"   },
     { "path": "/api/cron/outbound-prospect",     "schedule": "0 9 * * 1-5" },

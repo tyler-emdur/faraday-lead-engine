@@ -121,7 +121,7 @@ const STAGES = [
       glow: "shadow-amber-900/60",
     },
     systems: [
-      "Storm Monitor", "Reddit Monitor", "Permit Scanner", "Competitor Reviews",
+      "Storm Monitor", "Permit Scanner", "Competitor Reviews",
       "Pending Sales", "HOA Violations", "Unclaimed Damage", "FEMA Monitor", "Gov't Bids",
     ],
   },
@@ -200,11 +200,10 @@ function stageForCron(cronName: string, cronStatus: CronStatus[]): StageId | nul
 function cronEventNarrative(log: CronLog): string {
   const n = {
     "storm-check":          "Scanned NWS for Colorado hail events",
-    "reddit-monitor":       "Searched CO subreddits for roofing signals",
     "permit-monitor":       "Pulled Denver building permit records",
     "competitor-reviews":   "Mined Google + Yelp for angry competitor reviews",
     "listing-monitor":      "Checked Redfin for new pending home sales",
-    "hoa-violations":       "Scraped HOA directories + Reddit for roof violations",
+    "hoa-violations":       "Scraped HOA directories for management companies to prospect",
     "hail-damage-unclaimed":"Cross-referenced storm history vs permit records",
     "fema-monitor":         "Checked FEMA disaster declarations",
     "bid-monitor":          "Scanned CO procurement portals for roofing RFPs",
@@ -236,7 +235,7 @@ function segmentLabel(s: string): string {
 
 function stageOf(cronName: string): StageId {
   const map: Record<string, StageId> = {
-    "storm-check": "detect", "reddit-monitor": "detect", "permit-monitor": "detect",
+    "storm-check": "detect", "permit-monitor": "detect",
     "competitor-reviews": "detect", "listing-monitor": "detect", "hoa-violations": "detect",
     "hail-damage-unclaimed": "detect", "fema-monitor": "detect", "bid-monitor": "detect",
     "prospect-scraper": "reach", "outbound-prospect": "reach", "contact-form-targets": "reach",
@@ -456,7 +455,6 @@ function IntelPanel({ opportunities, stormActive, metaAds }: {
   const [expanded, setExpanded] = useState<string | null>(null);
   const sourceIcon: Record<string, string> = {
     storm: "⚡",
-    reddit: "📢",
     community_import: "⭐",
     property_scan: "🏠",
   };

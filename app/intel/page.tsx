@@ -30,14 +30,12 @@ const STATUS_COLOR: Record<OpportunityStatus, string> = {
 };
 
 const SOURCE_LABEL: Record<string, string> = {
-  reddit: "Reddit",
   storm: "Storm",
   community_import: "Community",
   property_scan: "Property",
 };
 
 const SOURCE_COLOR: Record<string, string> = {
-  reddit: "bg-orange-900/50 text-orange-300",
   storm: "bg-sky-900/50 text-sky-300",
   community_import: "bg-violet-900/50 text-violet-300",
   property_scan: "bg-teal-900/50 text-teal-300",
@@ -493,7 +491,6 @@ export default function IntelPage() {
           >
             <option value="all">All sources</option>
             <option value="storm">Storm</option>
-            <option value="reddit">Reddit</option>
             <option value="community_import">Community</option>
             <option value="property_scan">Property</option>
           </select>
@@ -511,7 +508,7 @@ export default function IntelPage() {
         {filtered.length === 0 && !loading && (
           <div className="text-center py-16 text-gray-600">
             <p className="text-lg font-semibold mb-1">No opportunities yet</p>
-            <p className="text-sm">They appear automatically when storms hit or Reddit posts match. Import a community post manually above.</p>
+            <p className="text-sm">They appear automatically when storms hit. Import a community post manually above.</p>
           </div>
         )}
 
@@ -576,7 +573,7 @@ export default function IntelPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(["reddit", "storm", "community_import", "property_scan"] as OpportunitySource[]).map(src => {
+                  {(["storm", "community_import", "property_scan"] as OpportunitySource[]).map(src => {
                     const srcOpps = opps.filter(o => o.source === src);
                     if (!srcOpps.length) return null;
                     const contacted = srcOpps.filter(o => o.status !== "new").length;
