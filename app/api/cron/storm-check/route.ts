@@ -408,12 +408,14 @@ async function blastB2BOnStorm(alert: StormAlert): Promise<number> {
 
     if (!prospects?.length) return 0;
 
-    const targeted = prospects.filter(p =>
-      affectedCities.some(ac =>
-        (p.city || "").toLowerCase().includes(ac) ||
-        ac.includes((p.city || "").toLowerCase().split(" ")[0])
-      )
-    );
+    const targeted = prospects.filter(p => {
+      if (!p.city) return false; // skip null-city prospects — would match everything
+      const pCity = p.city.toLowerCase();
+      return affectedCities.some(ac =>
+        pCity.includes(ac) ||
+        (pCity.split(" ")[0].length >= 4 && ac.includes(pCity.split(" ")[0]))
+      );
+    });
 
     if (targeted.length === 0) return 0;
 
