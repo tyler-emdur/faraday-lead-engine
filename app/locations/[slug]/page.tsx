@@ -201,6 +201,7 @@ export default async function LocationPage({ params }: { params: Promise<{ slug:
             <div className="flex items-center gap-4">
               <a href="/" className="hover:text-gray-500 transition-colors">Home</a>
               <a href="/locations" className="hover:text-gray-500 transition-colors">All Locations</a>
+              <a href="/storm-alerts" className="hover:text-gray-500 transition-colors">Free Hail Alerts</a>
             </div>
           </div>
         </div>

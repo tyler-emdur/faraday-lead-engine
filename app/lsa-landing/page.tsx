@@ -44,11 +44,13 @@ export default function LSALandingPage() {
               e.preventDefault();
               const f = e.currentTarget;
               const data = Object.fromEntries(new FormData(f));
-              await fetch("/api/leads", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ...data, source: "lsa", service: "hail_damage", homeowner: true }),
-              });
+              try {
+                await fetch("/api/leads", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ ...data, source: "lsa", service: "hail_damage", homeowner: true }),
+                });
+              } catch {}
               f.innerHTML = `<p class="text-center text-green-700 font-bold py-4">✅ Got it! Anna will text you within 5 minutes.</p>`;
             }}
           >

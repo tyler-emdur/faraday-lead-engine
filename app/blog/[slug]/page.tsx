@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getSupabase } from "@/lib/supabase";
+import QuickCaptureForm from "@/components/QuickCaptureForm";
 
 export const revalidate = 3600;
 
@@ -141,34 +142,26 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
               <p className="text-gray-400 text-xs mt-0.5">Most repairs are fully covered by insurance.</p>
             </div>
             <Link
-              href="/#chat"
+              href="#blog-cta"
               className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-5 py-2.5 rounded-xl text-sm transition-colors whitespace-nowrap"
             >
-              Chat with Anna →
+              Get a Free Inspection →
             </Link>
           </div>
         )}
 
-        {/* Main CTA */}
-        <div className="mt-12 bg-amber-500/10 border border-amber-500/30 rounded-2xl p-8 text-center">
-          <h2 className="text-2xl font-black text-white mb-2">Ready for a Free Inspection?</h2>
-          <p className="text-gray-400 mb-6 text-sm">
-            No pressure, no obligation. A Faraday specialist will assess your home and give you a detailed written estimate.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <Link
-              href="/#chat"
-              className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-8 py-3 rounded-xl transition-colors text-sm"
-            >
-              Chat With Anna Now
-            </Link>
-            <a
-              href={`tel:${phone}`}
-              className="border border-amber-500/50 text-amber-400 hover:bg-amber-500/10 font-semibold px-8 py-3 rounded-xl transition-colors text-sm"
-            >
-              Call {phone}
-            </a>
+        {/* Main CTA — inline form, no navigation away from the article */}
+        <div id="blog-cta" className="mt-12 bg-gray-900 border border-amber-500/25 rounded-2xl p-6 md:p-7">
+          <div className="text-center mb-5">
+            <h2 className="text-2xl font-black text-white mb-2">Ready for a Free Inspection?</h2>
+            <p className="text-gray-400 text-sm">
+              No pressure, no obligation. 30 seconds. We call or text within the hour.
+            </p>
           </div>
+          <QuickCaptureForm source="blog_post" />
+          <p className="text-gray-600 text-xs text-center mt-4">
+            Prefer to call? <a href={`tel:${phone}`} className="text-amber-400 hover:text-amber-300 font-semibold transition-colors">{phone}</a>
+          </p>
         </div>
 
         {/* Related articles prompt */}

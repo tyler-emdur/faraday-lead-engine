@@ -338,7 +338,8 @@ export default function HomePage() {
             <span>© {new Date().getFullYear()} Faraday Construction. Licensed &amp; Insured in Colorado.</span>
             <div className="flex items-center gap-4">
               <a href="/blog" className="hover:text-gray-500 transition-colors">Blog</a>
-              <a href="/storm" className="hover:text-gray-500 transition-colors">Storm Tracker</a>
+              <a href="/hail-map" className="hover:text-gray-500 transition-colors">Storm Tracker</a>
+              <a href="/storm-alerts" className="hover:text-gray-500 transition-colors">Free Hail Alerts</a>
               <a href="/admin" className="hover:text-gray-500 transition-colors">Admin</a>
             </div>
           </div>
