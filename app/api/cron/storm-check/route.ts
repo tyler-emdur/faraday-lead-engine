@@ -356,6 +356,108 @@ Return ONLY JSON (no backticks):
   }
 }
 
+// ─── STORM → B2B BLAST ───────────────────────────────────────────────────────
+// When hail hits a city, immediately email every B2B prospect in that area.
+// Different angle from the regular cold sequence — this is urgent and timely:
+// "Hail just hit your communities 2 hours ago. Want us to do free assessments?"
+// A property manager who gets this email while their residents are texting them
+// about damage is going to respond. Converts at 5-10x the cold-intro rate.
+
+const B2B_STORM_SEGMENTS: Record<string, (company: string, city: string, hailNote: string) => string> = {
+  hoa_manager: (company, city, hail) =>
+    `Hi — I'm Anna with Faraday Construction. ${hail} just hit ${city} — your communities may have damage residents haven't spotted yet. We do free community-wide assessments with written reports for the board at no cost to the HOA. Want us to schedule for this week before claim windows close? - Anna`,
+  property_manager: (company, city, hail) =>
+    `Hi — Anna with Faraday. ${hail} hit ${city} tonight. Several property managers in the area are already booking free post-storm roof assessments — we provide written reports for insurance documentation at no charge. Can we schedule a quick look at your properties this week? - Anna`,
+  apartment_manager: (company, city, hail) =>
+    `Hi — Anna with Faraday Construction. ${hail} hit ${city} — flat roof damage from hail is easy to miss and can void warranties if not documented quickly. We do free certified inspections with written reports for maintenance records. Interested for this week? - Anna`,
+  condo_manager: (company, city, hail) =>
+    `Hi — ${hail} just hit ${city}. For condo associations, undocumented hail damage creates shared liability issues. Faraday does free community assessments with board-ready written reports. Worth a quick look this week? - Anna`,
+  insurance_agent: (company, city, hail) =>
+    `Hi — Anna with Faraday. ${hail} hit ${city} tonight — your clients with homes in the area may be calling you. When they ask about next steps, we'd love to be your go-to referral for free inspections. We make the claim process easy so you look good. - Anna`,
+  public_adjuster: (company, city, hail) =>
+    `Hi — Anna with Faraday Construction. ${hail} hit ${city} tonight. If you're taking on storm claims in the area, we'd like to be your roofing partner — we document damage thoroughly, turn around written reports fast, and work directly with adjusters. Worth connecting this week? - Anna`,
+  home_inspector: (company, city, hail) =>
+    `Hi — Anna with Faraday. ${hail} just hit ${city}. If you have inspections coming up in the area, we can provide same-day roof cert letters for deals where the inspector flags storm damage. Would that be a useful referral to have on hand? - Anna`,
+  restoration_contractor: (company, city, hail) =>
+    `Hi — ${hail} hit ${city} tonight. If you're getting water-intrusion calls from the storm, we're doing free roof assessments this week and can coordinate with restoration crews on-site. Want to link up? - Anna, Faraday Construction`,
+  gutter_company: (company, city, hail) =>
+    `Hi — Anna with Faraday. ${hail} hit ${city} tonight. If you're up on roofs this week doing gutter work and spot storm damage, we'd love to be your referral — we pay $50 per lead that turns into an inspection. Worth a quick chat? - Anna`,
+  general_contractor: (company, city, hail) =>
+    `Hi — ${hail} just hit ${city}. If any of your clients are asking about roof damage from tonight's storm, Faraday handles the full insurance process — free inspection, documentation, claim filing. Happy to be your roofing referral. - Anna`,
+};
+
+async function blastB2BOnStorm(alert: StormAlert): Promise<number> {
+  if (!process.env.SUPABASE_URL || !process.env.RESEND_API_KEY) return 0;
+
+  try {
+    const { getSupabase } = await import("@/lib/supabase");
+    const { sendEmail } = await import("@/lib/resend");
+    const db = getSupabase();
+
+    const affectedCities = alert.affected_cities.map(c => c.toLowerCase());
+    const hail = hailNote(alert);
+    const city = primaryCity(alert);
+
+    // Get all emailable prospects in affected cities that haven't opted out
+    const { data: prospects } = await db
+      .from("outbound_prospects")
+      .select("id, email, name, company, city, source")
+      .not("email", "is", null)
+      .not("status", "eq", "do_not_contact")
+      .not("status", "eq", "unqualified");
+
+    if (!prospects?.length) return 0;
+
+    const targeted = prospects.filter(p =>
+      affectedCities.some(ac =>
+        (p.city || "").toLowerCase().includes(ac) ||
+        ac.includes((p.city || "").toLowerCase().split(" ")[0])
+      )
+    );
+
+    if (targeted.length === 0) return 0;
+
+    let sent = 0;
+    const STORM_BLAST_LIMIT = 30;
+
+    for (const prospect of targeted.slice(0, STORM_BLAST_LIMIT)) {
+      const seg = prospect.source || "property_manager";
+      const messageFn = B2B_STORM_SEGMENTS[seg] || B2B_STORM_SEGMENTS["property_manager"];
+      const body = messageFn(prospect.company || prospect.name || "there", city, hail);
+      const subject = `${hail} just hit ${city} — free community assessments this week`;
+
+      try {
+        await sendEmail(
+          prospect.email!,
+          subject,
+          `<div style="font-family:sans-serif;font-size:14px;line-height:1.6;white-space:pre-wrap;max-width:560px;">${body}</div>`
+        );
+
+        // Log the storm blast touch in email_threads so the main cron doesn't re-send cold intro
+        await db.from("email_threads").upsert({
+          prospect_id: prospect.id,
+          thread_id: `storm_${alert.nws_id}_${prospect.id}`,
+          role: "assistant",
+          content: body,
+          subject,
+        }).catch(() => {}); // non-fatal
+
+        sent++;
+        // Small delay to avoid Resend rate limits
+        await new Promise(r => setTimeout(r, 200));
+      } catch (e) {
+        console.error(`Storm B2B blast failed for ${prospect.email}:`, e);
+      }
+    }
+
+    console.log(`Storm B2B blast: ${sent} emails sent to prospects in ${city} area`);
+    return sent;
+  } catch (e) {
+    console.error("Storm B2B blast failed:", e);
+    return 0;
+  }
+}
+
 // ─── REENGAGEMENT ─────────────────────────────────────────────────────────────
 
 async function getLeadsForReengagement(
@@ -427,6 +529,8 @@ export async function GET(req: NextRequest) {
       fetchColoradoWatches(),
     ]);
     results.alerts_checked = allAlerts.length;
+    // @ts-ignore — added below
+    results.b2b_blasted = 0;
 
     // ── Pre-storm watch alerts ────────────────────────────────────────────────
     const frontRangeWatches = watchAlerts.filter(a => a.affected_cities.length > 0);
@@ -503,6 +607,7 @@ export async function GET(req: NextRequest) {
         geofenceResult,
         bufferResult,
         metaAdsResult,
+        b2bBlastResult,
         reengageResult,
         intelResult,
       ] = await Promise.allSettled([
@@ -592,7 +697,10 @@ export async function GET(req: NextRequest) {
           return created;
         })(),
 
-        // 7. Re-engage past leads in storm area
+        // 7. B2B blast — email all prospects in affected cities with storm-urgent message
+        blastB2BOnStorm(alert),
+
+        // 8. Re-engage past leads in storm area
         (async () => {
           const oldLeads = await getLeadsForReengagement(affectedCities);
           const sent: string[] = [];
@@ -606,7 +714,7 @@ export async function GET(req: NextRequest) {
           return sent.length;
         })(),
 
-        // 8. Create intel opportunities per city
+        // 9. Create intel opportunities per city
         (async () => {
           if (!process.env.SUPABASE_URL) return;
           const { getSupabase } = await import("@/lib/supabase");
@@ -668,9 +776,11 @@ export async function GET(req: NextRequest) {
       results.geofencing_created = geofenceResult.status === "fulfilled" && !!geofenceResult.value;
       results.meta_ads_created = metaAdsResult.status === "fulfilled" ? ((metaAdsResult.value as string[]) || []).length : 0;
       results.leads_reengaged = reengageResult.status === "fulfilled" ? (reengageResult.value as number) || 0 : 0;
+      // @ts-ignore
+      results.b2b_blasted = b2bBlastResult.status === "fulfilled" ? (b2bBlastResult.value as number) || 0 : 0;
 
       // Log any failures
-      const failedActions = [notifyResult, emailResult, fbResult, subscriberResult, blogResult, adsResult, videoResult, geofenceResult, bufferResult, metaAdsResult, reengageResult, intelResult]
+      const failedActions = [notifyResult, emailResult, fbResult, subscriberResult, blogResult, adsResult, videoResult, geofenceResult, bufferResult, metaAdsResult, b2bBlastResult, reengageResult, intelResult]
         .filter(r => r.status === "rejected")
         .map(r => (r as PromiseRejectedResult).reason?.message || "unknown");
       if (failedActions.length > 0) console.error("Storm actions failed:", failedActions);

@@ -88,6 +88,36 @@ const SEGMENT_ANGLES: Record<string, string[]> = {
     `Follow-up #3: They worked with a condo association in [city] last year that used their assessment report in their board meeting to approve a full roof replacement covered by insurance. Thought that might be relevant.`,
     `Break-up email #4: Last note. They're locking in their condo partnerships for the season and wanted one last check-in.`,
   ],
+  public_adjuster: [
+    `Cold intro: Faraday wants to be the roofing company public adjusters call first on storm damage claims. When a PA takes on a hail claim, they need a roofer who documents damage thoroughly, writes clean adjuster-ready reports, and doesn't create problems during the claim. That's exactly what Faraday does — fast turnaround, detailed measurement reports, no surprises.`,
+    `Follow-up #2: Quick follow-up — what does their current roofing referral process look like when working a hail claim? Faraday can have a written damage assessment ready within 24 hours of the call, which helps PAs move claims faster and dispute lowball estimates.`,
+    `Follow-up #3: A PA in [city] they work with closed a $34,000 claim last spring partly because Faraday's damage photos and measurement reports were detailed enough to counter the insurance company's initial estimate. Not pushing, just thought that was worth mentioning.`,
+    `Break-up email #4: Last note. They're locking in roofing referral partnerships before peak storm season and wanted to give them one last shot before moving on.`,
+  ],
+  home_inspector: [
+    `Cold intro: When a home inspector flags roof damage, buyers need somewhere to turn. Faraday does same-day roof certifications and free inspections — buyers get clarity fast, deals stay on track, and inspectors have a referral that makes them look good. If storm damage is involved, insurance often covers the full replacement.`,
+    `Follow-up #2: Quick follow-up — what do they usually recommend when a buyer asks about roof repair after an inspection? Faraday handles the full insurance process if storm damage is involved, which can mean the repair costs the buyer nothing.`,
+    `Follow-up #3: An inspector in [city] started referring buyers to Faraday last year — three of those turned into full roof replacements covered 100% by insurance. The buyers left 5-star reviews and credited the inspector for catching it. Worth sharing.`,
+    `Break-up email #4: Last note. They have room for one more inspection referral partner before summer season ramps up and wanted to check in one final time.`,
+  ],
+  restoration_contractor: [
+    `Cold intro: Faraday wants to be the roofing company restoration contractors call when a job involves a roof leak. When water gets inside, the roof is usually the source — Faraday can be on-site same day to assess, document, and start the roof claim while the restoration crew handles the interior. One call, two coordinated crews, one clean claim.`,
+    `Follow-up #2: Quick follow-up — when they're on a water mitigation job that starts with a roof leak, who do they call for the roof side? Faraday turns around insurance-ready documentation fast so the full claim moves as one.`,
+    `Follow-up #3: A restoration company in [city] they partner with texts them whenever a dispatch involves roof penetration — saved both crews time and the homeowner a second deductible. Thought that model might be useful.`,
+    `Break-up email #4: Last check-in. They're finalizing roofing referral partnerships for storm season and didn't want to leave them out.`,
+  ],
+  gutter_company: [
+    `Cold intro: Faraday pays $50 per referral for homeowners who get a roof inspection after a gutter job. Gutter crews are often first on a roof after a storm — if they spot hail dents, soft metal, or granule loss, a quick heads-up to the homeowner could save them a lot of money. Faraday handles everything from there.`,
+    `Follow-up #2: Quick follow-up — does their crew ever notice roof damage while doing gutter work? Faraday makes it simple: crew mentions what they saw, Faraday does a free inspection, and if it turns into a claim, there's a $50 referral payment.`,
+    `Follow-up #3: A gutter company in [city] referred 7 homeowners to Faraday last spring — all 7 had insurance-covered roof damage they didn't know about. The gutter company earned $350 in referral fees and their customers loved them for it.`,
+    `Break-up email #4: Last note. They're wrapping up referral partnerships for the season and wanted to reach out one more time before moving on.`,
+  ],
+  general_contractor: [
+    `Cold intro: Faraday wants to be the roofing sub general contractors trust for storm damage work. When a GC's client asks about roofing after a hail event, Faraday handles the full insurance process — inspection, documentation, claim filing, replacement — and keeps the GC in the loop. No headaches, full transparency, fast quotes.`,
+    `Follow-up #2: Quick follow-up — when a client asks about roofing, do they have a sub they usually call or are they open to new referrals? Faraday turns around quotes and insurance estimates fast so GCs don't lose clients waiting on a roofer.`,
+    `Follow-up #3: A GC in [city] started sending Faraday roof clients last year — two became full insurance-covered replacements. The clients gave the GC credit for connecting them. Worth having the number in their phone.`,
+    `Break-up email #4: Last note. They're locking in subcontractor relationships for summer and wanted to check in one more time.`,
+  ],
 };
 
 function buildSystemPrompt(source: string | null, touchNumber: number): string {

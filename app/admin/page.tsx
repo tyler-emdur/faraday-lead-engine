@@ -75,7 +75,31 @@ interface Appointment {
   lead?: Lead;
 }
 
-type Tab = "leads" | "submissions" | "crons" | "storms";
+type Tab = "leads" | "submissions" | "outreach" | "crons" | "storms";
+
+interface ContactFormItem {
+  id: string;
+  business_name: string;
+  website: string;
+  source?: string;
+  city?: string;
+  drafted_message: string;
+  status: "pending_send" | "sent" | "skipped";
+  queued_at: string;
+  sent_at?: string;
+}
+
+interface OutreachProspect {
+  id: string;
+  company?: string;
+  city?: string;
+  source?: string;
+  status?: string;
+  email?: string;
+  follow_up_count?: number;
+  last_contacted_at?: string;
+  created_at: string;
+}
 
 // ─── Score badge ──────────────────────────────────────────────────────────────
 
@@ -312,6 +336,9 @@ export default function AdminPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [storms, setStorms] = useState<Storm[]>([]);
   const [cronLogs, setCronLogs] = useState<CronLog[]>([]);
+  const [contactForms, setContactForms] = useState<ContactFormItem[]>([]);
+  const [outreachProspects, setOutreachProspects] = useState<OutreachProspect[]>([]);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   // Filters
@@ -332,6 +359,11 @@ export default function AdminPage() {
         const r = await fetch(`/api/leads?${params}`);
         const d = await r.json();
         setLeads(d.leads || []);
+      } else if (t === "outreach") {
+        const r = await fetch("/api/admin/outreach");
+        const d = await r.json();
+        setContactForms(d.contactForms || []);
+        setOutreachProspects(d.prospects || []);
       } else if (t === "storms") {
         const r = await fetch("/api/storms");
         const d = await r.json();
@@ -390,7 +422,22 @@ export default function AdminPage() {
   });
 
   const submitted = leads.filter(l => l.submitted_to_faraday);
-  const TABS: Tab[] = ["leads", "submissions", "crons", "storms"];
+  const TABS: Tab[] = ["leads", "submissions", "outreach", "crons", "storms"];
+
+  const updateFormStatus = async (id: string, status: "sent" | "skipped") => {
+    await fetch("/api/admin/outreach", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status }),
+    });
+    setContactForms(prev => prev.map(f => f.id === id ? { ...f, status } : f));
+  };
+
+  const copyMessage = (item: ContactFormItem) => {
+    navigator.clipboard.writeText(item.drafted_message);
+    setCopiedId(item.id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
 
   // Cron schedule windows (expected run intervals in minutes)
   const CRON_WINDOWS: Record<string, number> = {
@@ -420,7 +467,7 @@ export default function AdminPage() {
             {TABS.map(t => (
               <button key={t} onClick={() => setTab(t)}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium capitalize transition-colors ${tab === t ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" : "text-gray-400 hover:text-white hover:bg-gray-800"}`}>
-                {t === "crons" ? "Cron Health" : t}
+                {t === "crons" ? "Cron Health" : t === "outreach" ? "Outreach" : t}
               </button>
             ))}
           </div>
@@ -551,6 +598,158 @@ export default function AdminPage() {
             </div>
           </>
         )}
+
+        {/* ── OUTREACH ──────────────────────────────────────────────────────── */}
+        {tab === "outreach" && (() => {
+          const withEmail = outreachProspects.filter(p => p.email);
+          const withoutEmail = outreachProspects.filter(p => !p.email);
+          const contacted = withEmail.filter(p => p.status === "contacted" || (p.follow_up_count || 0) > 0);
+          const pending = contactForms.filter(f => f.status === "pending_send");
+          const sent = contactForms.filter(f => f.status === "sent");
+
+          return (
+            <>
+              {/* KPIs */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+                {[
+                  { label: "Prospects w/ Email", value: withEmail.length, color: withEmail.length > 0 ? "text-green-400" : "text-red-400", note: "Cron can email these" },
+                  { label: "Contacted", value: contacted.length, color: "text-amber-400", note: "Touched at least once" },
+                  { label: "Form Queue — Pending", value: pending.length, color: pending.length > 0 ? "text-amber-400" : "text-gray-500", note: "Needs manual paste" },
+                  { label: "Form Queue — Sent", value: sent.length, color: "text-green-400", note: "Done" },
+                ].map(({ label, value, color, note }) => (
+                  <div key={label} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                    <p className={`text-2xl font-black ${color}`}>{value}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{label}</p>
+                    <p className="text-xs text-gray-600 mt-0.5">{note}</p>
+                  </div>
+                ))}
+              </div>
+
+              {withEmail.length === 0 && (
+                <div className="bg-red-950/30 border border-red-800/50 rounded-xl p-4 mb-6">
+                  <p className="text-red-400 font-semibold text-sm">⚠ Cold-email engine is dormant — 0 prospects have an email address.</p>
+                  <p className="text-red-300/70 text-xs mt-1">Run <code className="bg-red-950/50 px-1 rounded">node scripts/seed-real-prospects.js</code> to load ~85 prospects with emails and activate the cron.</p>
+                </div>
+              )}
+
+              {/* Contact Form Queue */}
+              {contactForms.length > 0 && (
+                <div className="mb-8">
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-base font-bold text-white">Contact Form Queue</h2>
+                    <span className="text-xs text-gray-500">{pending.length} pending · {sent.length} sent · {contactForms.filter(f => f.status === "skipped").length} skipped</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-4">These companies don&apos;t have direct emails — Anna drafted messages for their contact forms. Copy the message, paste it into their website form, then mark as sent.</p>
+                  <div className="space-y-3">
+                    {contactForms.map(item => (
+                      <div key={item.id} className={`border rounded-xl p-4 ${item.status === "sent" ? "border-green-800/30 bg-green-950/10 opacity-60" : item.status === "skipped" ? "border-gray-800 opacity-40" : "border-gray-700 bg-gray-900"}`}>
+                        <div className="flex items-start justify-between gap-3 mb-3">
+                          <div>
+                            <p className="font-medium text-white text-sm">{item.business_name}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-xs text-gray-500">{item.city || "—"}</span>
+                              {item.source && <span className="text-xs text-gray-600 capitalize">{item.source.replace(/_/g, " ")}</span>}
+                              {item.website && (
+                                <a href={item.website} target="_blank" rel="noopener noreferrer"
+                                  className="text-xs text-amber-500 hover:text-amber-400 underline underline-offset-2">
+                                  Open site →
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded flex-shrink-0 ${
+                            item.status === "sent" ? "bg-green-900/40 text-green-400" :
+                            item.status === "skipped" ? "bg-gray-800 text-gray-500" :
+                            "bg-amber-900/30 text-amber-400"
+                          }`}>{item.status === "pending_send" ? "pending" : item.status}</span>
+                        </div>
+
+                        <pre className="text-xs text-gray-300 bg-gray-800/60 rounded-lg p-3 whitespace-pre-wrap font-sans leading-relaxed mb-3">{item.drafted_message}</pre>
+
+                        {item.status === "pending_send" && (
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => copyMessage(item)}
+                              className="text-xs bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-400 px-3 py-1.5 rounded-lg transition-colors font-medium"
+                            >
+                              {copiedId === item.id ? "✓ Copied!" : "Copy Message"}
+                            </button>
+                            <button
+                              onClick={() => updateFormStatus(item.id, "sent")}
+                              className="text-xs bg-green-900/30 hover:bg-green-900/50 border border-green-800 text-green-400 px-3 py-1.5 rounded-lg transition-colors font-medium"
+                            >
+                              Mark Sent
+                            </button>
+                            <button
+                              onClick={() => updateFormStatus(item.id, "skipped")}
+                              className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-500 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              Skip
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Prospect table */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-base font-bold text-white">Email Prospects ({outreachProspects.length} total)</h2>
+                  <div className="flex gap-2 text-xs text-gray-500">
+                    <span className="text-green-400">{withEmail.length} w/ email</span>
+                    <span>·</span>
+                    <span className="text-gray-600">{withoutEmail.length} email=null</span>
+                  </div>
+                </div>
+                <div className="overflow-x-auto rounded-xl border border-gray-800">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-800 bg-gray-900/50">
+                        {["Company", "City", "Segment", "Email", "Status", "Touches", "Last Contact"].map(h => (
+                          <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-semibold uppercase tracking-wider">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {outreachProspects.map(p => (
+                        <tr key={p.id} className="border-b border-gray-800/40 hover:bg-gray-900/30 transition-colors">
+                          <td className="px-4 py-2.5 font-medium text-white text-xs">{p.company || "—"}</td>
+                          <td className="px-4 py-2.5 text-gray-400 text-xs">{p.city || "—"}</td>
+                          <td className="px-4 py-2.5 text-xs">
+                            <span className="text-gray-500 capitalize">{(p.source || "—").replace(/_/g, " ")}</span>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs">
+                            {p.email
+                              ? <span className="text-green-400 font-mono">{p.email}</span>
+                              : <span className="text-gray-700 italic">null</span>
+                            }
+                          </td>
+                          <td className="px-4 py-2.5 text-xs">
+                            <span className={`px-2 py-0.5 rounded capitalize ${
+                              p.status === "contacted" ? "bg-amber-900/30 text-amber-400" :
+                              p.status === "replied" ? "bg-green-900/40 text-green-400" :
+                              "bg-gray-800 text-gray-500"
+                            }`}>{p.status || "new"}</span>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs text-gray-400">{p.follow_up_count || 0} / 4</td>
+                          <td className="px-4 py-2.5 text-xs text-gray-500">
+                            {p.last_contacted_at ? new Date(p.last_contacted_at).toLocaleDateString() : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {outreachProspects.length === 0 && (
+                    <p className="text-center py-12 text-gray-600">No prospects yet. Run seed-real-prospects.js to load them.</p>
+                  )}
+                </div>
+              </div>
+            </>
+          );
+        })()}
 
         {/* ── CRON HEALTH ───────────────────────────────────────────────────── */}
         {tab === "crons" && (

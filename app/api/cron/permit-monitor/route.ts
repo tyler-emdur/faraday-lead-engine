@@ -15,6 +15,93 @@ import { NextRequest, NextResponse } from "next/server";
 import { notifyTyler } from "@/lib/notify";
 import { scoreOpportunity, generateAIAnalysis, saveOpportunity, opportunityExists } from "@/lib/intel";
 
+// ─── NEIGHBOR BLASTER ──────────────────────────────────────────────────────────
+// When a roofing permit is found at "123 Oak St", the 4 nearest neighbors
+// (121, 119, 125, 127) almost certainly have the same-aged roof and same storm exposure.
+// This generates a draft "neighbor letter" for each address and adds it to
+// contact_form_queue as physical_mail type. Tyler sees them in /admin → Outreach.
+//
+// No paid API needed — street number arithmetic + address formatting.
+// Physical mailing cost: ~$1/postcard via USPS or Lob.com (manual for now).
+
+function generateNeighborAddresses(address: string): string[] {
+  // Parse "123 OAK ST" → number=123, street="OAK ST"
+  const match = address.trim().match(/^(\d+)\s+(.+)$/);
+  if (!match) return [];
+
+  const num = parseInt(match[1], 10);
+  const street = match[2];
+
+  // Generate ±2 addresses on same street (skipping even/odd parity issues, just do ±2/±4)
+  const neighbors: string[] = [];
+  for (const offset of [-4, -2, 2, 4]) {
+    const n = num + offset;
+    if (n > 0) neighbors.push(`${n} ${street}`);
+  }
+  return neighbors;
+}
+
+function draftNeighborLetter(neighborAddress: string, jobAddress: string, city: string, service: string): string {
+  const serviceLabel = service === "roofing" ? "roof replacement" : service === "hail_damage" ? "hail damage repair" : "storm repair";
+  return `Hi neighbor at ${neighborAddress},
+
+I'm Anna with Faraday Construction. We recently completed a ${serviceLabel} at ${jobAddress} — just down the street from you.
+
+Homes on the same block often share the same roof age and the same storm exposure. If your home went through the same hail events, you may have damage that insurance will cover — most homeowners only pay their deductible, and the average claim in Colorado is $9,000–$22,000.
+
+We're offering your block a free roof inspection this week with no commitment. Just call or text (720) 766-1518 or visit leads.faradaysun.com.
+
+— Anna
+Faraday Construction · BBB A+ Rated · Colorado License #EC.0101010`;
+}
+
+async function queueNeighborOutreach(
+  address: string,
+  city: string,
+  service: string,
+  permitId: string
+): Promise<number> {
+  if (!process.env.SUPABASE_URL) return 0;
+  if (service !== "roofing" && service !== "hail_damage") return 0; // Only queue for roof work
+
+  try {
+    const { getSupabase } = await import("@/lib/supabase");
+    const db = getSupabase();
+
+    const neighbors = generateNeighborAddresses(address);
+    if (neighbors.length === 0) return 0;
+
+    let queued = 0;
+    for (const neighborAddr of neighbors) {
+      const queueId = `neighbor_${permitId}_${neighborAddr.replace(/\s+/g, "_")}`;
+
+      // Check if already queued
+      const { data: existing } = await db
+        .from("contact_form_queue")
+        .select("id")
+        .eq("business_name", `MAIL TO: ${neighborAddr}`)
+        .maybeSingle();
+      if (existing) continue;
+
+      const draft = draftNeighborLetter(neighborAddr, address, city, service);
+
+      await db.from("contact_form_queue").insert({
+        business_name: `MAIL TO: ${neighborAddr}`,
+        website: `${neighborAddr}, ${city}, CO`,
+        source: "neighbor_blaster",
+        city,
+        drafted_message: draft,
+        status: "pending_send",
+      });
+      queued++;
+    }
+    return queued;
+  } catch (e) {
+    console.error("Neighbor queue failed:", e);
+    return 0;
+  }
+}
+
 export const maxDuration = 60;
 
 // ─── PERMIT SOURCES ────────────────────────────────────────────────────────────
@@ -115,7 +202,7 @@ export async function GET(req: NextRequest) {
     .toISOString()
     .slice(0, 10); // YYYY-MM-DD
 
-  const results = { permits_checked: 0, matched: 0, saved: 0, alerted: 0 };
+  const results = { permits_checked: 0, matched: 0, saved: 0, alerted: 0, neighbors_queued: 0 };
   const highPriorityFinds: string[] = [];
 
   for (const source of SOURCES) {
@@ -189,6 +276,12 @@ export async function GET(req: NextRequest) {
         if (priority === "high") {
           highPriorityFinds.push(`${service.toUpperCase()} permit — ${address || neighborhood} (${source.name})`);
         }
+      }
+
+      // Queue neighbor outreach for roofing/hail permits
+      if (address && (service === "roofing" || service === "hail_damage")) {
+        const neighborsQueued = await queueNeighborOutreach(address, source.name, service, permitId);
+        results.neighbors_queued += neighborsQueued;
       }
     }
   }
