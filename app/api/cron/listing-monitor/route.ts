@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { saveOpportunity, opportunityExists } from "@/lib/intel";
 import { notifyTyler } from "@/lib/notify";
 import { sendEmail } from "@/lib/resend";
+import { getSupabase } from "@/lib/supabase";
 
 export const maxDuration = 60;
 
@@ -107,17 +108,63 @@ async function fetchRedfinPending(): Promise<{ address: string; city: string; zi
   return all;
 }
 
+// ── Upsert agent into outbound_prospects for 4-touch follow-up ───────────────
+
+async function addAgentToOutreach(agentName: string, agentEmail: string, city: string): Promise<void> {
+  try {
+    const db = getSupabase();
+    await db.from("outbound_prospects").upsert({
+      name: agentName,
+      company: agentName,
+      email: agentEmail.toLowerCase(),
+      city,
+      source: "realtor",
+      status: "new",
+      follow_up_count: 0,
+      metadata: { segment: "realtor", origin: "listing_monitor", email_status: "confirmed" },
+    }, { onConflict: "email", ignoreDuplicates: true });
+  } catch (e) {
+    console.error("Failed to add agent to outreach:", e);
+  }
+}
+
+// ── Queue no-email agents for manual lookup ───────────────────────────────────
+
+async function queueAgentLookup(agentName: string, address: string, city: string, listingUrl: string): Promise<void> {
+  try {
+    const db = getSupabase();
+
+    const { data: existing } = await db
+      .from("contact_form_queue")
+      .select("id")
+      .eq("business_name", `FIND EMAIL: ${agentName}`)
+      .maybeSingle();
+    if (existing) return;
+
+    await db.from("contact_form_queue").insert({
+      business_name: `FIND EMAIL: ${agentName}`,
+      website: listingUrl,
+      city,
+      source: "listing_monitor",
+      drafted_message: `Agent ${agentName} has a pending listing at ${address}, ${city}. Find their email on the MLS or their brokerage website and forward this:\n\nHi ${agentName.split(" ")[0]},\n\nI noticed ${address} just went under contract — congrats! If the home inspector flags any roof issues, Faraday Construction can turn around a same-day cert or repair so your deal doesn't fall through. We've saved a lot of Colorado closings. Happy to be your go-to roofer for this one and future listings — and I pay $100 per referral when a client of yours ends up getting work done.\n\n(720) 766-1518\n— Tyler, Faraday Construction`,
+      status: "pending_send",
+    });
+  } catch (e) {
+    console.error("Failed to queue agent lookup:", e);
+  }
+}
+
 // ── Auto-email to listing agent ───────────────────────────────────────────────
 
 function agentEmailHtml(agentName: string, address: string): string {
   const firstName = agentName.split(" ")[0] || "there";
   return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a;">
   <p>Hi ${firstName},</p>
-  <p>Congratulations on the offer at <strong>${address}</strong>! I noticed it just went under contract.</p>
-  <p>If the home inspector flags any roof issues — which is very common in Colorado after recent hail seasons — Faraday Construction can turn around a same-day inspection and certificate so your deal doesn't fall through.</p>
-  <p>We've helped save dozens of Colorado closings. I'd love to be a resource for you on this one and future listings.</p>
-  <p>My direct line is <strong>(720) 766-1518</strong>. Feel free to call or text me anytime.</p>
-  <p>Best,<br>Tyler Emdur<br>Faraday Construction<br>(720) 766-1518</p>
+  <p>Congrats on the contract at <strong>${address}</strong>!</p>
+  <p>If the home inspector flags any roof issues — very common in Colorado after hail seasons — Faraday Construction can turn around a same-day inspection and cert so your deal doesn't fall through.</p>
+  <p>I'd also love to be your go-to roofer for future listings. I pay <strong>$100 per referral</strong> when a client of yours gets work done — no contracts, just a quick call when something comes up.</p>
+  <p>Direct line: <strong>(720) 766-1518</strong>. Call or text anytime.</p>
+  <p>— Tyler Emdur<br>Faraday Construction<br>(720) 766-1518</p>
   <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
   <p style="font-size:12px;color:#9ca3af;">You're receiving this because your listing at ${address} recently went under contract. <a href="${SITE_URL}/unsubscribe">Unsubscribe</a></p>
 </div>`;
@@ -177,14 +224,21 @@ export async function GET(req: NextRequest) {
     const firstName = home.agentName.split(" ")[0] || "";
 
     // Auto-email the agent if we have their email and Resend is configured
+    // Also add them to outbound_prospects for 4-touch follow-up sequence
+    // If no email, queue a manual lookup task in contact_form_queue
     let emailSent = false;
     if (agentEmail && process.env.RESEND_API_KEY) {
       emailSent = await sendEmail(
         agentEmail,
-        `Re: ${home.address} — Roof cert if inspection flags anything`,
+        `Re: ${home.address} — Roof cert if anything comes up`,
         agentEmailHtml(home.agentName, home.address)
       ).catch(() => false);
       if (emailSent) results.emails_sent++;
+      // Add to outbound_prospects so the 4-touch sequence continues
+      await addAgentToOutreach(home.agentName, agentEmail, home.city);
+    } else {
+      // Queue manual lookup so Tyler can find and email them
+      await queueAgentLookup(home.agentName, home.address, home.city, home.url);
     }
 
     const opp = await saveOpportunity({
@@ -239,10 +293,13 @@ export async function GET(req: NextRequest) {
       if (agentEmail && process.env.RESEND_API_KEY) {
         emailSent = await sendEmail(
           agentEmail,
-          `Re: ${address} — Roof cert if inspection flags anything`,
+          `Re: ${address} — Roof cert if anything comes up`,
           agentEmailHtml(agentName, address)
         ).catch(() => false);
         if (emailSent) results.emails_sent++;
+        await addAgentToOutreach(agentName, agentEmail, city);
+      } else {
+        await queueAgentLookup(agentName, address, city, `https://www.attomdata.com`);
       }
 
       await saveOpportunity({
