@@ -55,6 +55,144 @@ We're offering your block a free roof inspection this week with no commitment. J
 Faraday Construction · BBB A+ Rated · Colorado License #EC.0101010`;
 }
 
+// ─── LOB.COM POSTCARD API ──────────────────────────────────────────────────────
+// Lob sends physical postcards via USPS for ~$1.09 each.
+// Set LOB_API_KEY in Vercel env vars to activate automatic mailing.
+// Set FARADAY_STREET, FARADAY_CITY, FARADAY_STATE, FARADAY_ZIP for return address.
+// Without LOB_API_KEY, falls back to contact_form_queue for manual mailing.
+//
+// Get a Lob account at lob.com — no minimum spend, pay per postcard.
+
+// City → default zip map for Denver permit addresses (zip refined by Lob address verification)
+const CITY_ZIP: Record<string, string> = {
+  Denver: "80202", Aurora: "80012", Lakewood: "80226", Westminster: "80031",
+  Arvada: "80002", Thornton: "80229", Boulder: "80301", "Fort Collins": "80521",
+  "Colorado Springs": "80903", Parker: "80134", "Castle Rock": "80104",
+  "Highlands Ranch": "80129", Englewood: "80110", Longmont: "80501",
+  Broomfield: "80021", Greeley: "80631", Loveland: "80537", Commerce: "80022",
+};
+
+function postcardFront(neighborAddr: string, jobAddr: string, city: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head><style>
+  body { font-family: Arial, sans-serif; margin: 0; padding: 30px; background: #fff; }
+  .header { background: #1e3a5f; color: white; padding: 12px 20px; border-radius: 4px; margin-bottom: 16px; }
+  .header h1 { margin: 0; font-size: 18px; }
+  .header p { margin: 4px 0 0; font-size: 12px; opacity: 0.85; }
+  .body { font-size: 13px; color: #333; line-height: 1.5; }
+  .highlight { background: #fef3c7; border-left: 3px solid #f59e0b; padding: 8px 12px; margin: 12px 0; font-size: 12px; }
+  .cta { background: #1e3a5f; color: white; text-align: center; padding: 12px; border-radius: 4px; margin-top: 14px; font-size: 15px; font-weight: bold; }
+</style></head>
+<body>
+  <div class="header">
+    <h1>Faraday Construction</h1>
+    <p>Colorado Licensed Roofing · BBB A+ Rated</p>
+  </div>
+  <div class="body">
+    <p>Hi neighbor,</p>
+    <p>We recently completed a <strong>roof replacement at ${jobAddr}</strong> — just down the street.</p>
+    <p>Homes on the same block often have the same roof age and the same storm exposure. If your home went through recent hail events, you may have damage your insurance will cover.</p>
+    <div class="highlight">
+      Most Colorado homeowners pay <strong>only their deductible</strong>. The average insurance claim is $9,000–$22,000.
+    </div>
+    <p>We're offering your block a <strong>free roof inspection this week</strong> with no commitment.</p>
+  </div>
+  <div class="cta">Call or text: (720) 766-1518<br><span style="font-size:12px;font-weight:normal;">leads.faradaysun.com</span></div>
+</body>
+</html>`;
+}
+
+function postcardBack(neighborAddr: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head><style>
+  body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #fff; font-size: 12px; color: #333; }
+  .return { color: #666; font-size: 11px; margin-bottom: 20px; }
+  .message { margin-top: 10px; line-height: 1.6; }
+  .sig { margin-top: 16px; color: #1e3a5f; font-weight: bold; }
+</style></head>
+<body>
+  <div class="return">
+    Faraday Construction<br>
+    ${process.env.FARADAY_STREET || "PO Box 12345"}<br>
+    ${process.env.FARADAY_CITY || "Denver"}, ${process.env.FARADAY_STATE || "CO"} ${process.env.FARADAY_ZIP || "80202"}
+  </div>
+  <div class="message">
+    A neighbor of yours just had their roof replaced by Faraday Construction.<br><br>
+    Hail damage from recent storms often affects entire blocks at once — if your roof hasn't been inspected recently, there may be damage your insurance will cover at no cost to you.<br><br>
+    We're offering a <strong>free inspection this week</strong> to neighbors of every job we complete.
+  </div>
+  <div class="sig">
+    — Tyler Emdur, Faraday Construction<br>
+    (720) 766-1518 · leads.faradaysun.com
+  </div>
+</body>
+</html>`;
+}
+
+async function sendLobPostcard(
+  neighborAddr: string,
+  city: string,
+  jobAddr: string
+): Promise<boolean> {
+  const lobKey = process.env.LOB_API_KEY;
+  if (!lobKey) return false;
+
+  const zip = CITY_ZIP[city] || "80202";
+  const fromStreet = process.env.FARADAY_STREET || "PO Box 12345";
+  const fromCity = process.env.FARADAY_CITY || "Denver";
+  const fromState = process.env.FARADAY_STATE || "CO";
+  const fromZip = process.env.FARADAY_ZIP || "80202";
+
+  try {
+    const body = {
+      description: `Neighbor blaster: ${neighborAddr}, ${city}`,
+      to: {
+        name: "Current Resident",
+        address_line1: neighborAddr,
+        address_city: city,
+        address_state: "CO",
+        address_zip: zip,
+        address_country: "US",
+      },
+      from: {
+        name: "Faraday Construction",
+        address_line1: fromStreet,
+        address_city: fromCity,
+        address_state: fromState,
+        address_zip: fromZip,
+        address_country: "US",
+      },
+      size: "4x6",
+      front: postcardFront(neighborAddr, jobAddr, city),
+      back: postcardBack(neighborAddr),
+    };
+
+    const res = await fetch("https://api.lob.com/v1/postcards", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Basic ${Buffer.from(lobKey + ":").toString("base64")}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      console.error(`Lob postcard failed for ${neighborAddr}: ${res.status} ${err.slice(0, 200)}`);
+      return false;
+    }
+
+    const data = await res.json() as { id?: string };
+    console.log(`Lob postcard queued: ${neighborAddr} — ID: ${data.id}`);
+    return true;
+  } catch (e) {
+    console.error(`Lob postcard error for ${neighborAddr}:`, e);
+    return false;
+  }
+}
+
 async function queueNeighborOutreach(
   address: string,
   city: string,
@@ -62,20 +200,20 @@ async function queueNeighborOutreach(
   permitId: string
 ): Promise<number> {
   if (!process.env.SUPABASE_URL) return 0;
-  if (service !== "roofing" && service !== "hail_damage") return 0; // Only queue for roof work
+  if (service !== "roofing" && service !== "hail_damage") return 0;
+
+  const neighbors = generateNeighborAddresses(address);
+  if (neighbors.length === 0) return 0;
+
+  const lobEnabled = !!process.env.LOB_API_KEY;
+  let queued = 0;
 
   try {
     const { getSupabase } = await import("@/lib/supabase");
     const db = getSupabase();
 
-    const neighbors = generateNeighborAddresses(address);
-    if (neighbors.length === 0) return 0;
-
-    let queued = 0;
     for (const neighborAddr of neighbors) {
-      const queueId = `neighbor_${permitId}_${neighborAddr.replace(/\s+/g, "_")}`;
-
-      // Check if already queued
+      // Check if already processed
       const { data: existing } = await db
         .from("contact_form_queue")
         .select("id")
@@ -84,15 +222,24 @@ async function queueNeighborOutreach(
       if (existing) continue;
 
       const draft = draftNeighborLetter(neighborAddr, address, city, service);
+      let status = "pending_send";
 
+      // Try Lob first — if key is set, mail automatically
+      if (lobEnabled) {
+        const mailed = await sendLobPostcard(neighborAddr, city, address);
+        if (mailed) status = "sent"; // Mark as sent so admin queue stays clean
+      }
+
+      // Always log to contact_form_queue for record-keeping
       await db.from("contact_form_queue").insert({
         business_name: `MAIL TO: ${neighborAddr}`,
         website: `${neighborAddr}, ${city}, CO`,
         source: "neighbor_blaster",
         city,
         drafted_message: draft,
-        status: "pending_send",
+        status,
       });
+
       queued++;
     }
     return queued;

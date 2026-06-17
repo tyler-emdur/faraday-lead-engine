@@ -11,8 +11,14 @@ jobs:
     steps:
       - name: Trigger storm check
         run: |
-          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/storm-check" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+          HTTP_STATUS=$(curl -s -o /tmp/storm_response.json -w "%{http_code}" \
+            -X GET "${{ secrets.SITE_URL }}/api/cron/storm-check" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}")
+          echo "HTTP status: $HTTP_STATUS"
+          cat /tmp/storm_response.json || true
+          if [ "$HTTP_STATUS" -ge 500 ]; then
+            echo "::warning::Storm check returned $HTTP_STATUS"
+          fi
 
   follow-up:
     # Only run on the hour (minute 0 of any 15-min tick where GitHub fires at :00)

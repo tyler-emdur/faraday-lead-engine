@@ -492,7 +492,6 @@ async function seed() {
       city: p.city,
       source: 'public_adjuster',
       status: 'new',
-      follow_up_count: 0,
       metadata: p.metadata,
     };
 

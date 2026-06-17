@@ -90,6 +90,8 @@ async function fetchRedfinPending(): Promise<{ address: string; city: string; zi
       for (const home of homes) {
         const address = home.streetLine?.value || "";
         if (!address) continue;
+        // Only Colorado properties — Redfin region IDs sometimes bleed across state lines
+        if (home.state && home.state.toUpperCase() !== "CO") continue;
         all.push({
           address,
           city: home.city || mkt.label,
