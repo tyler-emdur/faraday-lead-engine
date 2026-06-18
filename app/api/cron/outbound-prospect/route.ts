@@ -16,8 +16,8 @@ import { cronRunner } from "@/lib/logger";
 
 export const maxDuration = 60;
 
-const RATE_LIMIT_PER_RUN = 40;
-const DELAY_MS = 3000;
+const RATE_LIMIT_PER_RUN = 6; // 6 × ~7s each ≈ 42s — fits in 60s function limit
+const DELAY_MS = 500;
 
 function getClient() {
   return new OpenAI({
