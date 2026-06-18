@@ -240,7 +240,7 @@ async function blastB2BOnStorm(alert: StormAlert): Promise<number> {
           role: "assistant",
           content: body,
           subject,
-        }).catch(() => {});
+        });
         sent++;
         await new Promise(r => setTimeout(r, 200));
       } catch (e) {

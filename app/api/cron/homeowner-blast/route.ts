@@ -128,7 +128,7 @@ export async function GET(req: NextRequest) {
       .limit(BATCH_SIZE);
 
     if (error || !homeowners?.length) {
-      await runner.finish(logId, { actionsCount: 0, skipped: "No pending homeowners in list" });
+      await runner.finish(logId, { actionsCount: 0 });
       return NextResponse.json({ success: true, sent: 0, message: "No pending homeowners. Upload a list at /api/homeowner-blast/import" });
     }
 
@@ -156,10 +156,10 @@ export async function GET(req: NextRequest) {
       } catch (err) {
         console.error(`Failed to send to ${homeowner.email}:`, err);
         bounced++;
-        await db.from("homeowner_blast_list")
+        db.from("homeowner_blast_list")
           .update({ status: "bounced" })
           .eq("id", homeowner.id)
-          .catch(() => {});
+          .then(() => {});
       }
     }
 
