@@ -153,7 +153,7 @@ export async function GET(req: NextRequest) {
 
   const tylerEmail = process.env.TYLER_EMAIL || process.env.TEAM_EMAIL;
   if (!tylerEmail || !process.env.RESEND_API_KEY) {
-    await runner.finish(logId, { actionsCount: 0, skipped: "Missing TYLER_EMAIL or RESEND_API_KEY" });
+    await runner.finish(logId, { actionsCount: 0 });
     return NextResponse.json({ success: false, message: "Missing TYLER_EMAIL or RESEND_API_KEY" });
   }
 
