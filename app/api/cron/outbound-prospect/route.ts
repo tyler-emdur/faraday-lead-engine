@@ -260,11 +260,12 @@ export async function GET(req: NextRequest) {
 
       const subject = touchNumber > 1 ? `Re: ${emailContent.subject}` : emailContent.subject;
 
-      await sendEmail(
+      const sent = await sendEmail(
         prospect.email as string,
         subject,
         `<div style="font-family:sans-serif;font-size:14px;line-height:1.6;white-space:pre-wrap;">${emailContent.body}</div>`
       );
+      if (!sent) throw new Error("sendEmail returned false — check FROM_EMAIL and Resend logs");
       emailsSent++;
 
       const newTouchCount = touchNumber;
