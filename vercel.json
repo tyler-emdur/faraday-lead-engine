@@ -1,18 +1,8 @@
 {
   "crons": [
-    { "path": "/api/cron/storm-check",          "schedule": "0 8 * * *"   },
-    { "path": "/api/cron/blog-generate",         "schedule": "0 9 * * 1"   },
-    { "path": "/api/cron/prospect-scraper",      "schedule": "0 6 * * 1"   },
-    { "path": "/api/cron/outbound-prospect",     "schedule": "0 9 * * 1-5" },
-    { "path": "/api/cron/contact-form-targets",  "schedule": "0 7 * * 1"   },
-    { "path": "/api/cron/competitor-reviews",    "schedule": "0 7 * * 1"   },
-    { "path": "/api/cron/listing-monitor",       "schedule": "0 9 * * *"   },
-    { "path": "/api/cron/permit-monitor",        "schedule": "0 15 * * *"  },
-    { "path": "/api/cron/fema-monitor",          "schedule": "0 8 * * *"   },
-    { "path": "/api/cron/bid-monitor",           "schedule": "0 7 * * *"   },
-    { "path": "/api/cron/hoa-violations",        "schedule": "0 10 * * 3"  },
-    { "path": "/api/cron/hail-damage-unclaimed", "schedule": "0 8 * * 1"   },
-    { "path": "/api/cron/meta-ad-cleanup",       "schedule": "0 12 * * *"  },
-    { "path": "/api/cron/weekly-report",         "schedule": "0 14 * * 1"  }
+    { "path": "/api/cron/storm-check",       "schedule": "0 8 * * *"   },
+    { "path": "/api/cron/outbound-prospect", "schedule": "0 9 * * 1-5" },
+    { "path": "/api/cron/craigslist-poster", "schedule": "0 14 * * *"  },
+    { "path": "/api/cron/homeowner-blast",   "schedule": "0 15 * * 1"  }
   ]
 }

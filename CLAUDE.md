@@ -10,13 +10,18 @@ Faraday's sales team handles everything after the lead is captured. That is not 
 
 ---
 
-## The three channels that matter
+## The only objective
 
-1. **Storm detection** → NWS alert fires → SMS blast to storm subscribers → homeowners visit site → submit form
-2. **SEO blog posts** → rank on Google for hail/roof keywords → organic traffic → submit form
-3. **B2B referral outreach** → cold email insurance agents, property managers, HOA managers → they refer homeowners → submit form
+Get strangers to leads.faradaysun.com and submit name + phone + service interest.
 
-Every cron, every feature, every line of code should serve one of these three channels.
+Every cron, every feature, every line of code must answer: **does this put more humans on the lead page?**
+
+## The two traffic levers
+
+1. **Direct outreach** → craigslist posts, homeowner email blasts → homeowners click link → lead page
+2. **B2B referral pipeline** → outbound-prospect emails B2B partners (insurance agents, PAs, PMs) → they refer clients → lead page
+
+Storm detection supports both: Tyler gets post templates to paste to Nextdoor/FB groups, B2B prospects get storm-urgent emails.
 
 ---
 
@@ -32,56 +37,42 @@ Do not build or suggest features in these areas.
 
 ---
 
-## Active crons (15 — once-daily for Vercel Hobby plan)
+## Active crons
 
 | Cron | Schedule | Purpose |
 |------|----------|---------|
-| storm-check | 8am daily | NWS hail detection → subscriber blast + blog + Meta ads |
-| blog-generate | Mon 9am | Weekly SEO blog post on hail/roofing keyword |
-| prospect-scraper | Mon 6am | Loads CO referral partners into outbound table (BROKEN — Overpass timeout) |
-| outbound-prospect | Weekdays 9am | Cold emails to B2B referral partners |
-| contact-form-targets | Mon 7am | Auto-submits contact forms for no-email prospects |
-| competitor-reviews | Mon 7am | 1-star reviews on competitors → outreach (NEEDS GOOGLE_PLACES_API_KEY) |
-| listing-monitor | 9am daily | Redfin pending homes → listing agents need roof certs |
-| permit-monitor | 3pm daily | Denver permits → neighbors of recent roofing jobs |
-| fema-monitor | 8am daily | FEMA disaster declarations |
-| bid-monitor | 7am daily | Colorado government roofing RFPs → emails Tyler proposals |
-| hoa-violations | Wed 10am | HOA management companies + Reddit roof violation posts |
-| hail-damage-unclaimed | Mon 8am | Historical storm areas with no permit activity |
-| meta-ad-cleanup | Noon daily | Pauses Facebook storm ads after 7 days |
-| weekly-report | Mon 2pm | Summary email to Tyler (leads, cron health) |
+| storm-check | 8am daily (+ every 30 min via GH Actions) | NWS hail → text Tyler post templates + B2B blast |
+| outbound-prospect | Weekdays 9am + 2pm (GH Actions) | Cold email B2B referral partners (4-touch sequence) |
+| craigslist-poster | Daily 8am MT | Emails Tyler ready-to-paste ad copy + city post links |
+| homeowner-blast | Monday 9am MT | Weekly blast to purchased homeowner email list (500/run) |
 
-## High-frequency crons (GitHub Actions — CRON_SECRET added to repo secrets ✓)
+## Disabled crons (removed — generated zero lead page traffic)
 
-| Workflow | Frequency |
-|----------|-----------|
-| storm-check | Every 30 min |
-| reddit-monitor | Every 15 min |
-| outbound-prospect | 9am + 2pm weekdays |
-| fema-monitor | 8am + 6pm daily |
+blog-generate, prospect-scraper, contact-form-targets, competitor-reviews, listing-monitor, permit-monitor, fema-monitor, bid-monitor, hoa-violations, hail-damage-unclaimed, meta-ad-cleanup, weekly-report, review-request, follow-up, intel-digest
 
 ---
 
 ## Current system state
 
-**Leads:** 6 total (4 chat widget, 1 website, 1 test). Delete test leads at /admin.
+**Leads:** 6 total (4 chat widget, 1 website, 1 test).
 
-**Outbound prospects:** 20 seeded — HOA managers, property managers, insurance agents, mortgage brokers, title companies, realtors. Emails send from `anna@faradayleads.com`.
+**Outbound prospects:** 20 seeded — HOA managers, PMs, insurance agents, mortgage brokers, title companies, realtors. Emails send from `anna@faradayleads.com`.
 
-**Blog:** 2 posts live. Cron generates one per Monday.
+**Storm monitoring:** Active every 30 min via GitHub Actions.
 
-**Storm monitoring:** Active every 30 min via GitHub Actions. No storms detected yet.
-
-**What's broken / on hold:**
-- prospect-scraper — Overpass API times out from Vercel servers. Not urgent; 20 prospects already seeded.
-- competitor-reviews — needs GOOGLE_PLACES_API_KEY (requires credit card for Google Cloud)
+**Homeowner blast list:** Empty. Needs a purchased CSV uploaded via `POST /api/homeowner-blast/import`.
 
 ---
 
 ## Immediate next actions (priority order)
 
-1. **Set up Google Search Console** — verify faradaysun.com, check if blog posts are indexed. Free, 10 min. This is the only way to know if SEO is working.
-2. **Add TWILIO_PHONE_NUMBER to Vercel** — all SMS is broken without it. `vercel env add TWILIO_PHONE_NUMBER` then set Twilio webhook to `https://leads.faradaysun.com/api/inbound/sms`
+1. **Google Search Ads** — create account, 3 campaigns, $50–100/day. Keywords: "hail damage roof inspection colorado", "free roof inspection denver", "roof hail damage colorado". Landing page: leads.faradaysun.com. This is the only channel that reaches people at moment of intent.
+
+2. **Angi + Thumbtack + Yelp + Google Business Profile** — free listings on all four. 1–2 hours. Passive traffic forever.
+
+3. **Buy homeowner email list** — ListGiant.com or Melissa Data. Filter: CO Front Range zip codes, homeowner, single-family. 10,000 records, ~$150. Upload CSV to `/api/homeowner-blast/import` with `Authorization: Bearer $CRON_SECRET`. Weekly blast cron sends 500/week automatically.
+
+4. **Craigslist daily posts** — cron emails Tyler ready-to-paste copy every day at 8am. Tyler clicks 5 links, pastes, done. ~5 min/day.
 
 ---
 

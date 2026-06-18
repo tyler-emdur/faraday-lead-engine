@@ -4,7 +4,7 @@
 // Touch 4: break-up email (often gets the most replies).
 //
 // Rate limit: 40 emails per run, 3s delay between sends to avoid spam flags.
-// Prospects: pulled from outbound_prospects table (new or due for follow-up).
+// Touch tracking: stored in prospect metadata.touch_number (no schema change needed).
 //
 // Requires: AI_API_KEY, RESEND_API_KEY, SUPABASE_URL
 
@@ -17,7 +17,7 @@ import { cronRunner } from "@/lib/logger";
 export const maxDuration = 60;
 
 const RATE_LIMIT_PER_RUN = 40;
-const DELAY_MS = 3000; // 3s between sends
+const DELAY_MS = 3000;
 
 function getClient() {
   return new OpenAI({
@@ -38,7 +38,6 @@ RULES:
 
 Respond ONLY with a JSON object: {"subject": "...", "body": "..."}`;
 
-// Per-segment angles, differentiated by touch number
 const SEGMENT_ANGLES: Record<string, string[]> = {
   insurance_agent: [
     `Cold intro: You refer clients to Faraday for storm damage claims. The pitch: when their clients ask "do you know a good roofer?" they send them to Faraday. Faraday makes the claim process easy so agents look good.`,
@@ -108,9 +107,9 @@ const SEGMENT_ANGLES: Record<string, string[]> = {
   ],
   gutter_company: [
     `Cold intro — lead with the cash: "Faraday pays $50 per referral, cash, every time a homeowner you send us gets a roof inspection." Gutter crews are on roofs constantly. If they spot hail dents, soft metal, or granule loss, they can mention it to the homeowner and give out Faraday's number. That's it — $50 paid the same week. Ask: does their crew ever notice roof damage while on a job?`,
-    `Follow-up #2 — make it even simpler: They don't even need to sell it. Just say "you might want to get your roof checked — here's a company that does free inspections." Text Faraday the address and we handle the rest. $50 per referral, no paperwork. Ask: are they doing any gutter jobs this week where they've noticed roof damage?`,
+    `Follow-up #2 — make it even simpler: They don't even need to sell it. Just say "you might want to get your roof checked — here's a company that does free inspections" and text Faraday the address. $50 per referral, no paperwork. Ask: are they doing any gutter jobs this week where they've noticed roof damage?`,
     `Follow-up #3 — story with numbers: A gutter company in [city] referred 7 homeowners to Faraday last spring — all 7 had storm damage they didn't know about. The gutter company earned $350 in referral fees in one month, and every homeowner thanked them for the heads-up. Would they want to set up the same deal?`,
-    `Break-up email #4 — final: "Last message." The $50/referral offer doesn't go away. Whenever they're on a roof and see damage, they can text the address to (720) 766-1518. Faraday does the inspection and pays the referral if a claim moves forward. No reply needed.`,
+    `Break-up email #4 — final: "Last message." The $50/referral offer doesn't go away. Whenever they're on a roof and see damage, they can text the address to (720) 766-1518. Faraday inspects, pays the referral if a claim moves forward. No commitment, no reply needed.`,
   ],
   general_contractor: [
     `Cold intro: Faraday wants to be the roofing sub general contractors trust for storm damage work. When a GC's client asks about roofing after a hail event, Faraday handles the full insurance process — inspection, documentation, claim filing, replacement — and keeps the GC in the loop. No headaches, full transparency, fast quotes.`,
@@ -158,13 +157,20 @@ ${angle}
 ${BASE_RULES}`;
 }
 
-function followUpDelayDays(touchNumber: number): number {
-  // Touch 1→2: 3 days. Touch 2→3: 5 days. Touch 3→4: 7 days. After 4: done.
-  return [3, 5, 7][touchNumber - 1] || 999;
+// Days to wait before next touch (indexed by current touch number 1-3)
+const TOUCH_DELAYS_DAYS = [3, 5, 7];
+
+function daysRequired(touchNumber: number): number {
+  return TOUCH_DELAYS_DAYS[touchNumber - 1] ?? 7;
 }
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getTouchNumber(prospect: Record<string, unknown>): number {
+  const meta = (prospect.metadata as Record<string, unknown>) || {};
+  return Number(meta.touch_number || 0);
 }
 
 export async function GET(req: NextRequest) {
@@ -177,23 +183,42 @@ export async function GET(req: NextRequest) {
   const logId = await runner.start();
 
   const db = getSupabase();
-  const now = new Date().toISOString();
 
-  // Fetch prospects due for next touch:
-  // - New prospects (touch 1)
-  // - Previously contacted with next_follow_up_date <= now (touch 2/3/4)
-  // - Max follow_up_count < 4 (stop after 4 touches)
-  const { data: prospects, error } = await db
+  // Fetch new prospects (touch 1)
+  const { data: newProspects } = await db
     .from("outbound_prospects")
     .select("*")
-    .or(`status.eq.new,and(status.eq.contacted,next_follow_up_date.lte.${now})`)
-    .lt("follow_up_count", 4)
+    .eq("status", "new")
     .not("email", "is", null)
     .limit(RATE_LIMIT_PER_RUN);
 
-  if (error || !prospects || prospects.length === 0) {
+  // Fetch previously contacted prospects — use min delay (3 days) as DB filter,
+  // then check exact delay per touch number in JS
+  const minDelayAgo = new Date(Date.now() - 3 * 86400000).toISOString();
+  const { data: contactedProspects } = await db
+    .from("outbound_prospects")
+    .select("*")
+    .eq("status", "contacted")
+    .not("email", "is", null)
+    .lte("last_contacted_at", minDelayAgo)
+    .limit(RATE_LIMIT_PER_RUN);
+
+  const allCandidates = [...(newProspects || []), ...(contactedProspects || [])];
+
+  // Filter: skip anyone at 4+ touches, enforce per-touch delay for re-contacts
+  const prospects = allCandidates.filter((p) => {
+    const touchCount = getTouchNumber(p as Record<string, unknown>);
+    if (touchCount >= 4) return false;
+    if (p.status === "contacted" && p.last_contacted_at) {
+      const daysSince = (Date.now() - new Date(p.last_contacted_at as string).getTime()) / 86400000;
+      if (daysSince < daysRequired(touchCount)) return false;
+    }
+    return true;
+  }).slice(0, RATE_LIMIT_PER_RUN);
+
+  if (prospects.length === 0) {
     await runner.finish(logId, { actionsCount: 0 });
-    return NextResponse.json({ success: true, message: "No prospects due for outreach.", prospects_checked: prospects?.length ?? 0 });
+    return NextResponse.json({ success: true, message: "No prospects due for outreach.", prospects_checked: allCandidates.length });
   }
 
   const client = getClient();
@@ -204,7 +229,8 @@ export async function GET(req: NextRequest) {
   for (const prospect of prospects) {
     if (emailsSent >= RATE_LIMIT_PER_RUN) break;
 
-    const touchNumber = (prospect.follow_up_count || 0) + 1;
+    const touchCount = getTouchNumber(prospect as Record<string, unknown>);
+    const touchNumber = touchCount + 1;
     const segmentType = prospect.source || (prospect.metadata as Record<string, string>)?.prospect_type || "unknown";
 
     try {
@@ -232,34 +258,27 @@ export async function GET(req: NextRequest) {
         emailContent = JSON.parse(match[0]);
       }
 
-      // Add follow-up count to subject on touch 2+
-      const subject = touchNumber > 1
-        ? `Re: ${emailContent.subject}`
-        : emailContent.subject;
+      const subject = touchNumber > 1 ? `Re: ${emailContent.subject}` : emailContent.subject;
 
       await sendEmail(
-        prospect.email,
+        prospect.email as string,
         subject,
         `<div style="font-family:sans-serif;font-size:14px;line-height:1.6;white-space:pre-wrap;">${emailContent.body}</div>`
       );
       emailsSent++;
 
-      const nextTouch = touchNumber + 1;
-      const nextFollowUpDate = nextTouch <= 4
-        ? new Date(Date.now() + followUpDelayDays(touchNumber) * 86400000).toISOString().split("T")[0]
-        : null;
+      const newTouchCount = touchNumber;
+      const isDone = newTouchCount >= 4;
+      const meta = ((prospect.metadata as Record<string, unknown>) || {}) as Record<string, unknown>;
+      const threadId = (prospect.thread_id as string) || `thread_${Date.now()}_${prospect.id}`;
 
-      const threadId = prospect.thread_id || `thread_${Date.now()}_${prospect.id}`;
       await db.from("outbound_prospects").update({
-        status: "contacted",
+        status: isDone ? "completed" : "contacted",
         last_contacted_at: new Date().toISOString(),
-        last_message_sent: emailContent.body,
-        follow_up_count: touchNumber,
-        next_follow_up_date: nextFollowUpDate,
         thread_id: threadId,
-      }).eq("id", prospect.id);
+        metadata: { ...meta, touch_number: newTouchCount },
+      }).eq("id", prospect.id as string);
 
-      // Save to email thread history
       await db.from("email_threads").upsert({
         prospect_id: prospect.id,
         thread_id: threadId,
@@ -268,14 +287,13 @@ export async function GET(req: NextRequest) {
         subject,
       });
 
-      results.push({ prospect: prospect.email, touch: touchNumber, success: true });
+      results.push({ prospect: prospect.email as string, touch: touchNumber, success: true });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Failed to contact ${prospect.email} (touch ${touchNumber}):`, msg);
-      results.push({ prospect: prospect.email, touch: touchNumber, success: false, error: msg });
+      results.push({ prospect: prospect.email as string, touch: touchNumber, success: false, error: msg });
     }
 
-    // Rate limit delay between sends
     if (emailsSent < RATE_LIMIT_PER_RUN && emailsSent < prospects.length) {
       await sleep(DELAY_MS);
     }
