@@ -16,7 +16,7 @@ export async function sendEmail(
   html: string
 ): Promise<boolean> {
   try {
-    const from = process.env.FROM_EMAIL || "leads@faradayconstruction.com";
+    const from = (process.env.FROM_EMAIL || "leads@faradayconstruction.com").trim();
 
     await getClient().emails.send({
       from: `Faraday Construction <${from}>`,
