@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS partners (
   status        TEXT NOT NULL DEFAULT 'identified'
                 CHECK (status IN ('identified','contacted','interested','active','producing','inactive')),
   zip_codes     TEXT[] DEFAULT '{}',           -- service area → storm ZIP matching (Phase 2)
-  referral_fee  INTEGER NOT NULL DEFAULT 0,    -- $ you pay partner per ACCEPTED lead (rev-share)
+  referral_fee  INTEGER NOT NULL DEFAULT 25,   -- $ you pay partner per ACCEPTED lead (rev-share)
   notes         TEXT,
   source        TEXT,                          -- how they were found (discovery channel)
   last_alerted_at TIMESTAMPTZ,                 -- last storm alert sent (dedupe)

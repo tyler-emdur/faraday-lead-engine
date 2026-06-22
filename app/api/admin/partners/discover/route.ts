@@ -82,6 +82,7 @@ export async function POST(req: NextRequest) {
       contact_email: p.email || null,
       contact_phone: phone || null,
       status: "identified",
+      referral_fee: 25,
       source: `discovery:${p.source || "outbound_prospects"}`,
       notes: p.city ? `City: ${p.city}` : null,
     });

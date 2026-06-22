@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
     contact_email: body.contact_email || null,
     status: body.status || "identified",
     zip_codes,
-    referral_fee: Number(body.referral_fee) || 0,
+    referral_fee: (body.referral_fee === "" || body.referral_fee == null) ? 25 : Number(body.referral_fee),
     notes: body.notes || null,
     source: body.source || "manual",
   }).select().single();

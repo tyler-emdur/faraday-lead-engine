@@ -36,7 +36,7 @@ export default function PartnersPage() {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [loading, setLoading] = useState(false);
   const [showQr, setShowQr] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", company: "", type: "public_adjuster", zip_codes: "", referral_fee: "0", contact_phone: "", contact_email: "" });
+  const [form, setForm] = useState({ name: "", company: "", type: "public_adjuster", zip_codes: "", referral_fee: "25", contact_phone: "", contact_email: "" });
   const [err, setErr] = useState("");
 
   const load = useCallback(() => {
@@ -55,7 +55,7 @@ export default function PartnersPage() {
     });
     const d = await res.json();
     if (!res.ok) { setErr(d.error || "Failed"); return; }
-    setForm({ name: "", company: "", type: "public_adjuster", zip_codes: "", referral_fee: "0", contact_phone: "", contact_email: "" });
+    setForm({ name: "", company: "", type: "public_adjuster", zip_codes: "", referral_fee: "25", contact_phone: "", contact_email: "" });
     load();
   }
 
