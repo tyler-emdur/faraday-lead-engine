@@ -34,7 +34,10 @@ export async function GET(
   const userAgent = req.headers.get("user-agent") || "";
   const referrer = req.headers.get("referer") || "";
 
-  logClick(slug, ip, userAgent, referrer).catch(() => {});
+  // Await the click log before redirecting — on serverless, fire-and-forget work
+  // after the response is sent can be dropped, under-counting clicks. logClick
+  // swallows its own errors, so awaiting never blocks the redirect on failure.
+  await logClick(slug, ip, userAgent, referrer);
 
   const base = process.env.NEXT_PUBLIC_SITE_URL || "https://faradaysun.com";
   const dest = new URL("/hail-map", base);
