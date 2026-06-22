@@ -30,6 +30,9 @@ interface Lead {
   submitted_to_faraday?: boolean;
   submitted_at?: string;
   appointment_id?: string;
+  partner_id?: string;
+  accepted?: boolean;
+  accepted_at?: string;
   created_at: string;
 }
 
@@ -120,10 +123,12 @@ function ScoreBadge({ score }: { score?: number }) {
 
 function LeadDrawer({
   lead,
+  partnerLabel,
   onClose,
   onUpdate,
 }: {
   lead: Lead;
+  partnerLabel?: string | null;
   onClose: () => void;
   onUpdate: (id: string, updates: Partial<Lead>) => void;
 }) {
@@ -167,15 +172,16 @@ function LeadDrawer({
     }
   };
 
-  const submitToFaraday = async () => {
+  const toggleApprove = async () => {
     setSubmitting(true);
     try {
+      const accepted = !lead.accepted;
       await fetch(`/api/leads/${lead.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ submitted_to_faraday: true, submitted_at: new Date().toISOString(), status: "submitted" }),
+        body: JSON.stringify({ accepted }),
       });
-      onUpdate(lead.id, { submitted_to_faraday: true, status: "submitted" });
+      onUpdate(lead.id, { accepted, accepted_at: accepted ? new Date().toISOString() : undefined });
     } finally {
       setSubmitting(false);
     }
@@ -215,7 +221,8 @@ function LeadDrawer({
             ["Has Insurance", lead.has_insurance ? "✅ Yes" : "?"],
             ["Damage Visible", lead.damage_visible ? "✅ Yes" : "?"],
             ["Status", lead.status || "new"],
-            ["Submitted", lead.submitted_to_faraday ? `✅ ${lead.submitted_at ? new Date(lead.submitted_at).toLocaleDateString() : "Yes"}` : "No"],
+            ["Partner", partnerLabel || "—"],
+            ["Approved", lead.accepted ? `✅ ${lead.accepted_at ? new Date(lead.accepted_at).toLocaleDateString() : "Yes"}` : "No"],
           ].map(([k, v]) => (
             <div key={String(k)}>
               <span className="text-gray-500 text-xs block">{k}</span>
@@ -271,11 +278,11 @@ function LeadDrawer({
         {/* Actions */}
         <div className="px-5 py-4 border-t border-gray-800 flex gap-2">
           <button
-            onClick={submitToFaraday}
-            disabled={submitting || !!lead.submitted_to_faraday}
-            className="flex-1 bg-green-600 hover:bg-green-500 disabled:opacity-40 disabled:cursor-default text-white font-bold py-2.5 rounded-xl text-sm transition-colors"
+            onClick={toggleApprove}
+            disabled={submitting}
+            className={`flex-1 font-bold py-2.5 rounded-xl text-sm transition-colors disabled:opacity-40 ${lead.accepted ? "bg-green-600/30 border border-green-600/60 text-green-300" : "bg-green-600 hover:bg-green-500 text-white"}`}
           >
-            {lead.submitted_to_faraday ? "✅ Submitted" : submitting ? "Submitting..." : "Submit to Faraday ($100)"}
+            {lead.accepted ? "✓ Approved — tap to undo" : submitting ? "Approving..." : "Approve ($100)"}
           </button>
           {lead.phone && (
             <a
@@ -299,8 +306,8 @@ function KPIBar({ leads }: { leads: Lead[] }) {
     const d = new Date(l.created_at);
     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
   });
-  const submitted = leads.filter(l => l.submitted_to_faraday);
-  const convRate = leads.length ? Math.round((submitted.length / leads.length) * 100) : 0;
+  const approved = leads.filter(l => l.accepted);
+  const convRate = leads.length ? Math.round((approved.length / leads.length) * 100) : 0;
   const avgScore = leads.length
     ? Math.round(leads.reduce((sum, l) => sum + (l.lead_score ?? l.score ?? 0), 0) / leads.length)
     : 0;
@@ -311,8 +318,8 @@ function KPIBar({ leads }: { leads: Lead[] }) {
     <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
       {[
         { label: "Leads This Month", value: thisMonth.length, color: "text-white" },
-        { label: "Submitted (Revenue)", value: `${submitted.length} × $100 = $${submitted.length * 100}`, color: "text-green-400" },
-        { label: "Conversion Rate", value: `${convRate}%`, color: convRate >= 20 ? "text-green-400" : "text-amber-400" },
+        { label: "Approved (Revenue)", value: `${approved.length} × $100 = $${approved.length * 100}`, color: "text-green-400" },
+        { label: "Approval Rate", value: `${convRate}%`, color: convRate >= 20 ? "text-green-400" : "text-amber-400" },
         { label: "Avg Lead Score", value: avgScore, color: avgScore >= 60 ? "text-green-400" : "text-amber-400" },
         { label: "Active Convos", value: activeConvos.length, color: "text-blue-400" },
       ].map(({ label, value, color }) => (
@@ -341,9 +348,13 @@ export default function AdminPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // partner_id → display name (slug/name), for the Partner column
+  const [partnersById, setPartnersById] = useState<Record<string, string>>({});
+
   // Filters
   const [statusFilter, setStatusFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
+  const [partnerOnly, setPartnerOnly] = useState(false);
   const [search, setSearch] = useState("");
 
   // Drawer
@@ -356,9 +367,16 @@ export default function AdminPage() {
         const params = new URLSearchParams({ limit: "300" });
         if (statusFilter) params.set("status", statusFilter);
         if (sourceFilter) params.set("source", sourceFilter);
-        const r = await fetch(`/api/leads?${params}`);
-        const d = await r.json();
-        setLeads(d.leads || []);
+        const [leadsRes, partnersRes] = await Promise.all([
+          fetch(`/api/leads?${params}`).then(r => r.json()),
+          fetch("/api/admin/partners").then(r => r.json()).catch(() => ({ partners: [] })),
+        ]);
+        setLeads(leadsRes.leads || []);
+        const map: Record<string, string> = {};
+        for (const p of partnersRes.partners || []) {
+          if (p.id) map[p.id] = p.name || p.company || p.slug;
+        }
+        setPartnersById(map);
       } else if (t === "outreach") {
         const r = await fetch("/api/admin/outreach");
         const d = await r.json();
@@ -393,6 +411,19 @@ export default function AdminPage() {
     if (drawerLead?.id === id) setDrawerLead(null);
   };
 
+  // Approve = mark accepted (the $100 event that credits the referring partner in /admin/partners)
+  const approveLead = async (id: string, accepted: boolean) => {
+    await fetch(`/api/leads/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accepted }),
+    });
+    updateLead(id, { accepted, accepted_at: accepted ? new Date().toISOString() : undefined });
+  };
+
+  const partnerName = (l: Lead): string | null =>
+    l.partner_id ? (partnersById[l.partner_id] || "Partner") : null;
+
   if (!authed) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
@@ -414,6 +445,7 @@ export default function AdminPage() {
   }
 
   const filteredLeads = leads.filter(l => {
+    if (partnerOnly && !l.partner_id) return false;
     if (search) {
       const s = search.toLowerCase();
       return (l.name || "").toLowerCase().includes(s) || (l.phone || "").includes(s);
@@ -421,7 +453,7 @@ export default function AdminPage() {
     return true;
   });
 
-  const submitted = leads.filter(l => l.submitted_to_faraday);
+  const approved = leads.filter(l => l.accepted);
   const TABS: Tab[] = ["leads", "submissions", "outreach", "crons", "storms"];
 
   const updateFormStatus = async (id: string, status: "sent" | "skipped") => {
@@ -494,6 +526,10 @@ export default function AdminPage() {
                 <option value="">All Sources</option>
                 {["sms_inbound","email","widget","hail-map","lsa","angi","manychat","storm_alert"].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
+              <button onClick={() => setPartnerOnly(v => !v)}
+                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${partnerOnly ? "bg-amber-500/20 text-amber-400 border-amber-500/40" : "bg-gray-800 text-gray-400 border-gray-700 hover:text-white"}`}>
+                {partnerOnly ? "✓ Partner leads" : "Partner leads"}
+              </button>
               <button onClick={() => load("leads")}
                 className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 px-3 py-1.5 rounded-lg text-sm transition-colors ml-auto">
                 Refresh
@@ -505,7 +541,7 @@ export default function AdminPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-800 bg-gray-900/50">
-                      {["Name","Phone","Source","Score","Status","Last Activity","Zip",""].map(h => (
+                      {["Name","Phone","Partner","Source","Score","Status","Last Activity","Zip",""].map(h => (
                         <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-semibold uppercase tracking-wider">{h}</th>
                       ))}
                     </tr>
@@ -516,6 +552,11 @@ export default function AdminPage() {
                         onClick={() => setDrawerLead(lead)}>
                         <td className="px-4 py-3 font-medium text-white">{lead.name || <span className="text-gray-600">Unknown</span>}</td>
                         <td className="px-4 py-3 text-gray-300">{lead.phone || "—"}</td>
+                        <td className="px-4 py-3">
+                          {partnerName(lead)
+                            ? <span className="text-xs bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded">{partnerName(lead)}</span>
+                            : <span className="text-gray-700 text-xs">—</span>}
+                        </td>
                         <td className="px-4 py-3"><span className="text-xs text-gray-500 capitalize">{lead.source?.replace(/_/g," ") || "—"}</span></td>
                         <td className="px-4 py-3"><ScoreBadge score={lead.lead_score ?? lead.score} /></td>
                         <td className="px-4 py-3">
@@ -536,16 +577,16 @@ export default function AdminPage() {
                                 📞
                               </a>
                             )}
-                            {!lead.submitted_to_faraday && (
-                              <button onClick={async () => {
-                                await fetch(`/api/leads/${lead.id}`, {
-                                  method: "PATCH",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ submitted_to_faraday: true, submitted_at: new Date().toISOString(), status: "submitted" }),
-                                });
-                                updateLead(lead.id, { submitted_to_faraday: true, status: "submitted" });
-                              }} className="text-xs bg-green-900/40 hover:bg-green-900/60 border border-green-800 text-green-400 px-2 py-1 rounded-lg transition-colors">
-                                Submit
+                            {lead.accepted ? (
+                              <button onClick={() => approveLead(lead.id, false)}
+                                className="text-xs bg-green-600/30 border border-green-600/60 text-green-300 px-2 py-1 rounded-lg transition-colors"
+                                title="Approved — click to undo">
+                                ✓ Approved
+                              </button>
+                            ) : (
+                              <button onClick={() => approveLead(lead.id, true)}
+                                className="text-xs bg-green-900/40 hover:bg-green-900/60 border border-green-800 text-green-400 px-2 py-1 rounded-lg transition-colors">
+                                Approve
                               </button>
                             )}
                             <button
@@ -570,31 +611,32 @@ export default function AdminPage() {
         {tab === "submissions" && (
           <>
             <div className="bg-gray-900 border border-green-800/40 rounded-xl p-5 mb-6">
-              <p className="text-2xl font-black text-green-400">{submitted.length} leads submitted = ${submitted.length * 100} earned</p>
-              <p className="text-gray-500 text-sm mt-1">All-time · $100 per warm lead submitted to Faraday</p>
+              <p className="text-2xl font-black text-green-400">{approved.length} leads approved = ${approved.length * 100} earned</p>
+              <p className="text-gray-500 text-sm mt-1">All-time · $100 per approved warm lead</p>
             </div>
             <div className="overflow-x-auto rounded-xl border border-gray-800">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-800 bg-gray-900/50">
-                    {["Date Submitted","Name","Phone","Zip","Source"].map(h => (
+                    {["Date Approved","Name","Phone","Partner","Zip","Source"].map(h => (
                       <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-semibold uppercase">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {submitted.sort((a,b) => new Date(b.submitted_at || b.created_at).getTime() - new Date(a.submitted_at || a.created_at).getTime()).map(l => (
+                  {approved.sort((a,b) => new Date(b.accepted_at || b.created_at).getTime() - new Date(a.accepted_at || a.created_at).getTime()).map(l => (
                     <tr key={l.id} className="border-b border-gray-800/40">
-                      <td className="px-4 py-3 text-gray-400 text-xs">{l.submitted_at ? new Date(l.submitted_at).toLocaleDateString() : "—"}</td>
+                      <td className="px-4 py-3 text-gray-400 text-xs">{l.accepted_at ? new Date(l.accepted_at).toLocaleDateString() : "—"}</td>
                       <td className="px-4 py-3 font-medium">{l.name || "—"}</td>
                       <td className="px-4 py-3 text-gray-300">{l.phone || "—"}</td>
+                      <td className="px-4 py-3 text-amber-400 text-xs">{partnerName(l) || "—"}</td>
                       <td className="px-4 py-3 text-gray-400">{l.zip || l.city || "—"}</td>
                       <td className="px-4 py-3 text-gray-500 text-xs capitalize">{l.source?.replace(/_/g," ") || "—"}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {submitted.length === 0 && <p className="text-center py-12 text-gray-600">No submissions yet.</p>}
+              {approved.length === 0 && <p className="text-center py-12 text-gray-600">No approved leads yet.</p>}
             </div>
           </>
         )}
@@ -832,7 +874,7 @@ export default function AdminPage() {
 
       {/* Lead Drawer */}
       {drawerLead && (
-        <LeadDrawer lead={drawerLead} onClose={() => setDrawerLead(null)} onUpdate={updateLead} />
+        <LeadDrawer lead={drawerLead} partnerLabel={partnerName(drawerLead)} onClose={() => setDrawerLead(null)} onUpdate={updateLead} />
       )}
     </div>
   );
