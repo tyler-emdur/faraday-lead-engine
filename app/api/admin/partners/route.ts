@@ -130,3 +130,33 @@ export async function PATCH(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   return NextResponse.json({ success: true, partner: data });
 }
+
+// DELETE — remove partner(s) and their click logs. Leads stay (partner_id is set
+// to NULL by the FK). Supports:
+//   ?slug=<slug>      delete one partner (works for legacy click-only slugs too)
+//   ?status=<status>  bulk-delete all partners in a lifecycle stage (e.g. identified)
+export async function DELETE(req: NextRequest) {
+  if (!process.env.SUPABASE_URL) return NextResponse.json({ error: "No DB" }, { status: 500 });
+  const db = getSupabase();
+  const url = new URL(req.url);
+  const slug = url.searchParams.get("slug");
+  const status = url.searchParams.get("status");
+
+  if (slug) {
+    const { error } = await db.from("partners").delete().eq("slug", slug);
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    await db.from("partner_clicks").delete().eq("partner_slug", slug);
+    return NextResponse.json({ success: true, deleted: 1 });
+  }
+
+  if (status) {
+    const { data: rows } = await db.from("partners").select("slug").eq("status", status);
+    const slugs = (rows || []).map((r) => r.slug);
+    const { error } = await db.from("partners").delete().eq("status", status);
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    if (slugs.length) await db.from("partner_clicks").delete().in("partner_slug", slugs);
+    return NextResponse.json({ success: true, deleted: slugs.length });
+  }
+
+  return NextResponse.json({ error: "slug or status required" }, { status: 400 });
+}

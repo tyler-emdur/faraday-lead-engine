@@ -66,6 +66,22 @@ export default function PartnersPage() {
     load();
   }
 
+  async function deletePartner(slug: string, label: string) {
+    if (!confirm(`Delete partner "${label}"? Their leads stay (just unattributed); clicks are removed.`)) return;
+    await fetch(`/api/admin/partners?slug=${encodeURIComponent(slug)}`, { method: "DELETE" });
+    setPartners(prev => prev.filter(p => p.slug !== slug));
+  }
+
+  async function clearCandidates() {
+    const n = partners.filter(p => p.status === "identified").length;
+    if (n === 0) { alert("No 'identified' candidates to clear."); return; }
+    if (!confirm(`Delete all ${n} candidate partners (status: identified)? Active/producing partners are kept.`)) return;
+    const res = await fetch(`/api/admin/partners?status=identified`, { method: "DELETE" });
+    const d = await res.json();
+    alert(res.ok ? `Deleted ${d.deleted} candidates.` : (d.error || "Failed"));
+    load();
+  }
+
   async function runDiscovery() {
     if (!confirm("Import collected prospects as partner candidates (status: identified)?")) return;
     const res = await fetch("/api/admin/partners/discover", {
@@ -106,6 +122,7 @@ export default function PartnersPage() {
           </div>
           <div className="flex items-center gap-3">
             <button onClick={runDiscovery} className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 px-3 py-1.5 rounded-lg">Discover candidates</button>
+            <button onClick={clearCandidates} className="text-xs bg-red-900/20 hover:bg-red-900/40 border border-red-900/50 text-red-400 px-3 py-1.5 rounded-lg">Clear candidates</button>
             <a href="/admin" className="text-gray-500 hover:text-white text-sm">← Admin</a>
           </div>
         </div>
@@ -167,6 +184,8 @@ export default function PartnersPage() {
                         className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 px-2 py-0.5 rounded">QR</button>
                       <a href={`/partner/${p.slug}`} target="_blank" rel="noreferrer"
                         className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 px-2 py-0.5 rounded">Portal ↗</a>
+                      <button onClick={() => deletePartner(p.slug, p.name || p.slug)}
+                        className="text-xs bg-red-900/20 hover:bg-red-900/40 border border-red-900/50 text-red-500 px-2 py-0.5 rounded">Delete</button>
                     </div>
                     {p.zip_codes.length > 0 && (
                       <p className="text-xs text-gray-600 mt-1">ZIPs: {p.zip_codes.join(", ")}</p>
