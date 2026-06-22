@@ -4,11 +4,18 @@
 // When hail hits the Front Range:
 //   1. Text Tyler immediately with post templates + lead page link
 //   2. Email Tyler full Nextdoor/Facebook post copy ready to paste
-//   3. B2B blast — email all prospects in affected cities while it's hot
+//   3. PARTNER STORM ALERTS (Phase 2) — match affected ZIPs → partners assigned
+//      to those ZIPs → text/email each their OWN referral link + forwardable
+//      homeowner copy so they activate their own client base automatically.
 //   4. Log storm opportunity intel
 //
+// NOTE: The old cold-email B2B blast (Resend → outbound_prospects by city) was
+// removed — it violated Resend's AUP (cold outreach) and the partner network
+// replaces it with warm, opted-in, attributed referrals.
+//
 // Requires: CRON_SECRET
-// Optional: TYLER_PHONE/TEAM_PHONE, TYLER_EMAIL/TEAM_EMAIL, RESEND_API_KEY, SUPABASE_URL
+// Optional: TYLER_PHONE/TEAM_PHONE, TYLER_EMAIL/TEAM_EMAIL, RESEND_API_KEY,
+//           TWILIO_* (partner SMS), SUPABASE_URL
 
 import { NextRequest, NextResponse } from "next/server";
 import { fetchColoradoAlerts, fetchColoradoWatches, type StormAlert } from "@/lib/nws";
@@ -20,6 +27,8 @@ export const maxDuration = 60;
 
 const CRON_INTERVAL_MINUTES = 30;
 const WINDOW_MS = (CRON_INTERVAL_MINUTES + 5) * 60 * 1000;
+// Don't re-alert the same partner more than once per storm window.
+const PARTNER_ALERT_COOLOFF_MS = 12 * 60 * 60 * 1000;
 
 async function isAlertNew(alert: StormAlert): Promise<boolean> {
   if (process.env.SUPABASE_URL) {
@@ -78,7 +87,7 @@ function primaryCity(alert: StormAlert): string {
 function hailNote(alert: StormAlert): string {
   if (alert.hail_size_text) return alert.hail_size_text;
   if (alert.hail_size_inches > 0) return `${alert.hail_size_inches}-inch hail`;
-  return alert.has_hail ? "hail confirmed" : "severe storm";
+  return alert.has_hail ? "hail" : "severe storm";
 }
 
 function tylerSms(alert: StormAlert): string {
@@ -134,7 +143,6 @@ ${phone} | Faraday Construction`;
   <div style="background:#7f1d1d;padding:14px 24px;">
     <p style="color:#fca5a5;margin:0;font-size:14px;font-weight:700;">
       ${hail.toUpperCase()} detected. Post to Nextdoor + Facebook groups within 2 hours.
-      Then run a $200–500 Facebook ad targeting ${city} area homeowners.
     </p>
   </div>
 
@@ -152,8 +160,7 @@ ${phone} | Faraday Construction`;
 
     <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;">
       <p style="margin:0;font-size:13px;color:#166534;font-weight:600;">
-        Speed matters: leads within 6 hours of a storm convert at 2–3x the normal rate.<br>
-        Post now → run the ad → check your dashboard.
+        Speed matters: leads within 6 hours of a storm convert at 2–3x the normal rate.
       </p>
     </div>
   </div>
@@ -167,89 +174,111 @@ ${phone} | Faraday Construction`;
   };
 }
 
-// When hail hits, immediately email every B2B prospect in that area.
-// A property manager getting this while residents are texting about damage will respond.
-const B2B_STORM_SEGMENTS: Record<string, (company: string, city: string, hail: string) => string> = {
-  hoa_manager: (_, city, hail) =>
-    `Hi — I'm Anna with Faraday Construction. ${hail} just hit ${city} — your communities may have damage residents haven't spotted yet. We do free community-wide assessments with written reports for the board at no cost to the HOA. Want us to schedule for this week before claim windows close? - Anna`,
-  property_manager: (_, city, hail) =>
-    `Hi — Anna with Faraday. ${hail} hit ${city} tonight. Several property managers in the area are already booking free post-storm roof assessments — we provide written reports for insurance documentation at no charge. Can we schedule a quick look at your properties this week? - Anna`,
-  apartment_manager: (_, city, hail) =>
-    `Hi — Anna with Faraday Construction. ${hail} hit ${city} — flat roof damage from hail is easy to miss and can void warranties if not documented quickly. We do free certified inspections with written reports for maintenance records. Interested for this week? - Anna`,
-  condo_manager: (_, city, hail) =>
-    `Hi — ${hail} just hit ${city}. For condo associations, undocumented hail damage creates shared liability issues. Faraday does free community assessments with board-ready written reports. Worth a quick look this week? - Anna`,
-  insurance_agent: (_, city, hail) =>
-    `Hi — Anna with Faraday. ${hail} hit ${city} tonight — your clients in the area may be calling you. When they ask about next steps, we'd love to be your go-to referral for free inspections. We make the claim process easy so you look good. - Anna`,
-  public_adjuster: (_, city, hail) =>
-    `Hi — Anna with Faraday Construction. ${hail} hit ${city} tonight. If you're taking on storm claims in the area, we'd like to be your roofing partner — we document damage thoroughly, turn around written reports fast, and work directly with adjusters. Worth connecting this week? - Anna`,
-  home_inspector: (_, city, hail) =>
-    `Hi — Anna with Faraday. ${hail} just hit ${city}. If you have inspections coming up in the area, we can provide same-day roof cert letters for deals where the inspector flags storm damage. Would that be a useful referral to have on hand? - Anna`,
-  restoration_contractor: (_, city, hail) =>
-    `Hi — ${hail} hit ${city} tonight. If you're getting water-intrusion calls from the storm, we're doing free roof assessments this week and can coordinate with restoration crews on-site. Want to link up? - Anna, Faraday Construction`,
-  gutter_company: (_, city, hail) =>
-    `Hi — Anna with Faraday. ${hail} hit ${city} tonight. If you're up on roofs this week doing gutter work and spot storm damage, we'd love to be your referral — we pay $50 per lead that turns into an inspection. Worth a quick chat? - Anna`,
-  general_contractor: (_, city, hail) =>
-    `Hi — ${hail} just hit ${city}. If any of your clients are asking about roof damage from tonight's storm, Faraday handles the full insurance process — free inspection, documentation, claim filing. Happy to be your roofing referral. - Anna`,
-};
+// ── Phase 2: Partner storm alerts ───────────────────────────────────────────
+// The forwardable, homeowner-facing message a partner copy/pastes to their
+// clients. The partner's referral link is embedded so every resulting lead is
+// attributed back to them automatically.
+function homeownerForwardCopy(city: string, hail: string, link: string): string {
+  return `Hi — after the ${hail} that just hit ${city}, a lot of roofs have damage that's invisible from the ground. I work with Faraday Construction; they're doing free roof inspections this week, and if there's storm damage, insurance usually covers the full replacement minus your deductible. Takes 60 seconds to request one here: ${link}`;
+}
 
-async function blastB2BOnStorm(alert: StormAlert): Promise<number> {
-  if (!process.env.SUPABASE_URL || !process.env.RESEND_API_KEY) return 0;
+function partnerStormSms(name: string, city: string, hail: string, link: string, fee: number): string {
+  const earn = fee > 0 ? ` You earn $${fee} per accepted referral.` : "";
+  return [
+    `⚡ ${hail} just hit ${city}.`,
+    `Your clients there likely have roof damage insurance will cover.`,
+    `Forward your referral link: ${link}${earn}`,
+    `— Faraday`,
+  ].join(" ");
+}
+
+function partnerStormEmail(name: string, city: string, hail: string, link: string, fee: number): { subject: string; html: string } {
+  const forward = homeownerForwardCopy(city, hail, link);
+  const earn = fee > 0
+    ? `<p style="margin:0 0 14px;font-size:14px;color:#166534;font-weight:600;">You earn $${fee} for every referral that turns into an accepted inspection — no paperwork on your end.</p>`
+    : "";
+  return {
+    subject: `⚡ ${hail} hit ${city} — your clients can get a free roof inspection`,
+    html: `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a;">
+  <div style="background:#1a1a1a;padding:18px 22px;border-radius:12px 12px 0 0;">
+    <h1 style="color:#f59e0b;margin:0;font-size:18px;font-weight:900;">⚡ Storm just hit your area</h1>
+    <p style="color:#9ca3af;margin:6px 0 0;font-size:13px;">${hail} reported in ${city}</p>
+  </div>
+  <div style="padding:22px;background:#f9fafb;border:1px solid #e5e7eb;">
+    <p style="margin:0 0 14px;font-size:14px;line-height:1.6;">Hi ${name},</p>
+    <p style="margin:0 0 14px;font-size:14px;line-height:1.6;">${hail} just came through ${city}. Your clients there probably have roof damage they haven't noticed — and right now is the moment they'll act on it.</p>
+    ${earn}
+    <p style="margin:0 0 6px;font-size:14px;font-weight:700;">Your referral link:</p>
+    <div style="background:#fff;border:1px solid #d1d5db;border-radius:8px;padding:12px;margin-bottom:18px;">
+      <a href="${link}" style="color:#b45309;font-size:14px;word-break:break-all;">${link}</a>
+    </div>
+    <p style="margin:0 0 6px;font-size:14px;font-weight:700;">Copy &amp; forward this to your clients:</p>
+    <div style="background:#fff;border:1px solid #d1d5db;border-radius:8px;padding:14px;">
+      <pre style="font-family:inherit;font-size:13px;color:#374151;white-space:pre-wrap;margin:0;line-height:1.6;">${forward}</pre>
+    </div>
+  </div>
+  <div style="padding:14px 22px;background:#f3f4f6;border-radius:0 0 12px 12px;">
+    <p style="margin:0;font-size:12px;color:#6b7280;">You're getting this because ${city} is in your service area. Faraday Construction partner network.</p>
+  </div>
+</div>`,
+  };
+}
+
+// Match the storm's affected ZIPs to partners assigned to those ZIPs, then send
+// each engaged partner their referral link + forwardable copy. Returns count alerted.
+async function alertMatchedPartners(alert: StormAlert): Promise<number> {
+  if (!process.env.SUPABASE_URL) return 0;
+  const zips = (alert.affected_zips || []).filter(Boolean);
+  if (zips.length === 0) return 0; // can't target partners without ZIPs
+
   try {
     const { getSupabase } = await import("@/lib/supabase");
-    const { sendEmail } = await import("@/lib/resend");
     const db = getSupabase();
-    const affectedCities = alert.affected_cities.map(c => c.toLowerCase());
-    const hail = hailNote(alert);
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://leads.faradaysun.com";
     const city = primaryCity(alert);
+    const hail = hailNote(alert);
 
-    const { data: prospects } = await db
-      .from("outbound_prospects")
-      .select("id, email, name, company, city, source")
-      .not("email", "is", null)
-      .not("status", "eq", "do_not_contact")
-      .not("status", "eq", "unqualified");
+    // Only partners who've actually opted in (won't cold-blast 'identified' leads).
+    const { data: partners } = await db
+      .from("partners")
+      .select("id, slug, name, contact_phone, contact_email, zip_codes, referral_fee, last_alerted_at, status")
+      .in("status", ["interested", "active", "producing"])
+      .overlaps("zip_codes", zips);
 
-    if (!prospects?.length) return 0;
+    if (!partners?.length) return 0;
 
-    const targeted = prospects.filter(p => {
-      if (!p.city) return false;
-      const pCity = p.city.toLowerCase();
-      return affectedCities.some(ac =>
-        pCity.includes(ac) ||
-        (pCity.split(" ")[0].length >= 4 && ac.includes(pCity.split(" ")[0]))
-      );
-    });
+    const cooloff = Date.now() - PARTNER_ALERT_COOLOFF_MS;
+    let alerted = 0;
 
-    if (targeted.length === 0) return 0;
+    for (const p of partners) {
+      if (p.last_alerted_at && new Date(p.last_alerted_at).getTime() > cooloff) continue;
+      if (!p.contact_phone && !p.contact_email) continue;
 
-    let sent = 0;
-    for (const prospect of targeted.slice(0, 30)) {
-      const seg = prospect.source || "property_manager";
-      const messageFn = B2B_STORM_SEGMENTS[seg] || B2B_STORM_SEGMENTS["property_manager"];
-      const body = messageFn(prospect.company || prospect.name || "there", city, hail);
-      const subject = `${hail} just hit ${city} — free community assessments this week`;
-      try {
-        await sendEmail(
-          prospect.email!,
-          subject,
-          `<div style="font-family:sans-serif;font-size:14px;line-height:1.6;white-space:pre-wrap;max-width:560px;">${body}</div>`
-        );
-        await db.from("email_threads").upsert({
-          prospect_id: prospect.id,
-          thread_id: `storm_${alert.nws_id}_${prospect.id}`,
-          role: "assistant",
-          content: body,
-          subject,
-        });
-        sent++;
-        await new Promise(r => setTimeout(r, 200));
-      } catch (e) {
-        console.error(`Storm B2B blast failed for ${prospect.email}:`, e);
+      const link = `${siteUrl}/api/track/${p.slug}`;
+      const name = p.name || "there";
+      const fee = p.referral_fee || 0;
+      let delivered = false;
+
+      if (p.contact_phone && process.env.TWILIO_ACCOUNT_SID) {
+        const { sendSMS } = await import("@/lib/twilio");
+        delivered = await sendSMS(p.contact_phone, partnerStormSms(name, city, hail, link, fee)) || delivered;
       }
+      if (p.contact_email && process.env.RESEND_API_KEY) {
+        const { sendEmail } = await import("@/lib/resend");
+        const { subject, html } = partnerStormEmail(name, city, hail, link, fee);
+        delivered = await sendEmail(p.contact_email, subject, html) || delivered;
+      }
+
+      if (delivered) {
+        await db.from("partners").update({ last_alerted_at: new Date().toISOString() }).eq("id", p.id);
+        alerted++;
+      }
+      await new Promise(r => setTimeout(r, 150));
     }
-    return sent;
+    return alerted;
   } catch (e) {
-    console.error("Storm B2B blast failed:", e);
+    console.error("Partner storm alert failed:", e);
     return 0;
   }
 }
@@ -268,7 +297,7 @@ export async function GET(req: NextRequest) {
     new_hail_alerts: 0,
     watch_alerts: 0,
     tyler_notified: false,
-    b2b_blasted: 0,
+    partners_alerted: 0,
   };
 
   try {
@@ -334,10 +363,9 @@ export async function GET(req: NextRequest) {
 
       results.new_hail_alerts++;
       const affectedCities = alert.affected_cities;
-      const city = primaryCity(alert);
       const hailSizeInches = alert.hail_size_inches || 0.75;
 
-      const [notifyResult, emailResult, b2bResult, intelResult] = await Promise.allSettled([
+      const [notifyResult, emailResult, partnerResult, intelResult] = await Promise.allSettled([
 
         // 1. Text Tyler with post templates
         notifyTyler(tylerSms(alert), tylerAlertEmail(alert).subject),
@@ -351,8 +379,8 @@ export async function GET(req: NextRequest) {
           return sendEmail(tylerEmail, subject, html);
         })(),
 
-        // 3. B2B blast to prospects in affected cities
-        blastB2BOnStorm(alert),
+        // 3. Phase 2: alert partners assigned to the affected ZIPs
+        alertMatchedPartners(alert),
 
         // 4. Log intel opportunities
         (async () => {
@@ -392,16 +420,16 @@ export async function GET(req: NextRequest) {
       ]);
 
       results.tyler_notified = notifyResult.status === "fulfilled" || emailResult.status === "fulfilled";
-      results.b2b_blasted = b2bResult.status === "fulfilled" ? (b2bResult.value as number) || 0 : 0;
+      results.partners_alerted = partnerResult.status === "fulfilled" ? (partnerResult.value as number) || 0 : 0;
 
-      const failed = [notifyResult, emailResult, b2bResult, intelResult]
+      const failed = [notifyResult, emailResult, partnerResult, intelResult]
         .filter(r => r.status === "rejected")
         .map(r => (r as PromiseRejectedResult).reason?.message || "unknown");
       if (failed.length > 0) console.error("Storm actions failed:", failed);
 
       await markAlertProcessed(alert, {
         tyler_notified: results.tyler_notified,
-        b2b_blasted: results.b2b_blasted,
+        partners_alerted: results.partners_alerted,
       });
 
       break; // Only process the first (most severe) new alert to avoid blast spam

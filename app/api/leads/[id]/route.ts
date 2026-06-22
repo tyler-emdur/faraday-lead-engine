@@ -18,6 +18,12 @@ export async function PATCH(
       if (body[key] !== undefined) updates[key] = body[key];
     }
 
+    // Accepted toggle = the $100 event. Stamp accepted_at when flipped on.
+    if (body.accepted !== undefined) {
+      updates.accepted = !!body.accepted;
+      updates.accepted_at = body.accepted ? new Date().toISOString() : null;
+    }
+
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
     }

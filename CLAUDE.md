@@ -2,26 +2,34 @@
 
 ## What this system does
 
-Gets homeowners with roof damage to submit their **name and phone number**. That's it.
+Tyler is an **independent lead generator** (not Faraday). Faraday pays him **$100 per accepted
+warm lead** (homeowner name + phone). Faraday's sales team handles everything after capture.
 
-Tyler gets paid **$100 per warm lead** (name + phone captured). Nothing else earns money.
+**The product is the PARTNER REFERRAL NETWORK** — a passive, compounding asset that generates
+leads while Tyler is in school/asleep/traveling. The website is infrastructure. See
+**`PARTNER_NETWORK.md`** for the full architecture; read it before touching partner code.
 
-Faraday's sales team handles everything after the lead is captured. That is not this system's job.
+> Tyler already door-knocks at his job. This system must NOT depend on his physical presence or
+> daily manual effort. Score every idea by: *"How many leads does it generate while Tyler does
+> nothing?"* (See memory: `feedback-passive-asset`.)
 
 ---
 
 ## The only objective
 
-Get strangers to leads.faradaysun.com and submit name + phone + service interest.
+People who are already in front of damaged homes (PAs, inspectors, PMs, realtors,
+restoration/solar/gutter crews) refer homeowners via **their own tracked referral link** →
+homeowner submits name + phone at the lead page → lead is auto-attributed to that partner.
 
-Every cron, every feature, every line of code must answer: **does this put more humans on the lead page?**
+Every feature must answer: **does this help another person generate leads for Tyler while he's
+doing nothing?**
 
-## The two traffic levers
+## Hard constraints ($0 budget, results-only)
 
-1. **Direct outreach** → craigslist posts, homeowner email blasts → homeowners click link → lead page
-2. **B2B referral pipeline** → outbound-prospect emails B2B partners (insurance agents, PAs, PMs) → they refer clients → lead page
-
-Storm detection supports both: Tyler gets post templates to paste to Nextdoor/FB groups, B2B prospects get storm-urgent emails.
+- ❌ No paid ads, no SEO requiring the company site, no purchased email lists
+- ❌ No cold email (Resend AUP — it flagged the account; cold blasts removed in Phase 2)
+- ❌ No door-knocking/canvassing as the *system's* job (Tyler does that at his job)
+- ✅ Storm-triggered automation, referral automation, partner network — yes
 
 ---
 
@@ -41,10 +49,12 @@ Do not build or suggest features in these areas.
 
 | Cron | Schedule | Purpose |
 |------|----------|---------|
-| storm-check | 8am daily (+ every 30 min via GH Actions) | NWS hail → text Tyler post templates + B2B blast |
-| outbound-prospect | Weekdays 9am + 2pm (GH Actions) | Cold email B2B referral partners (4-touch sequence) |
+| storm-check | 8am daily (+ every 30 min via GH Actions) | NWS hail → text Tyler post templates **+ alert partners assigned to affected ZIPs with their referral link + forwardable homeowner copy** (Phase 2) |
 | craigslist-poster | Daily 8am MT | Emails Tyler ready-to-paste ad copy + city post links |
-| homeowner-blast | Monday 9am MT | Weekly blast to purchased homeowner email list (500/run) |
+
+**outbound-prospect** (cold B2B email) and the storm cold-blast are **deprecated** — cold email
+violates Resend AUP (flagged the account) and is replaced by the warm partner network. Do not
+re-enable cold outreach. **homeowner-blast** requires a purchased list (violates $0) — leave off.
 
 ## Disabled crons (removed — generated zero lead page traffic)
 
@@ -56,23 +66,30 @@ blog-generate, prospect-scraper, contact-form-targets, competitor-reviews, listi
 
 **Leads:** 6 total (4 chat widget, 1 website, 1 test).
 
-**Outbound prospects:** 20 seeded — HOA managers, PMs, insurance agents, mortgage brokers, title companies, realtors. Emails send from `anna@faradayleads.com`.
+**Partner network:** All 4 phases built (2026-06-22) — see `PARTNER_NETWORK.md`. `partners` table
+live in Supabase. Attribution loop fixed (`/api/leads` → `attributeLeadToPartner`). Dashboard at
+`/admin/partners` (create, QR, lifecycle, earnings). Partner portal at `/partner/<slug>`.
 
-**Storm monitoring:** Active every 30 min via GitHub Actions.
+**Storm monitoring:** Active every 30 min via GitHub Actions; now alerts ZIP-matched partners.
 
-**Homeowner blast list:** Empty. Needs a purchased CSV uploaded via `POST /api/homeowner-blast/import`.
+**Prospect pool:** ~hundreds in `outbound_prospects` (legacy cold-email data). Use the dashboard
+"Discover candidates" button to promote non-burned ones into `partners` as `identified`.
 
 ---
 
 ## Immediate next actions (priority order)
 
-1. **Google Search Ads** — create account, 3 campaigns, $50–100/day. Keywords: "hail damage roof inspection colorado", "free roof inspection denver", "roof hail damage colorado". Landing page: leads.faradaysun.com. This is the only channel that reaches people at moment of intent.
+1. **Verify the attribution loop** — create a test partner in `/admin/partners`, click its
+   `/api/track/<slug>` link, submit a test lead, confirm it shows 1 click/1 lead and flips to
+   earnings when accepted. (Steps in `PARTNER_NETWORK.md`.)
 
-2. **Angi + Thumbtack + Yelp + Google Business Profile** — free listings on all four. 1–2 hours. Passive traffic forever.
+2. **Seed real partners** — Tyler adds partners he meets in the field (PAs, inspectors, PMs) with
+   their service ZIPs + a `referral_fee`. Set status `interested`/`active` so storm alerts fire.
 
-3. **Buy homeowner email list** — ListGiant.com or Melissa Data. Filter: CO Front Range zip codes, homeowner, single-family. 10,000 records, ~$150. Upload CSV to `/api/homeowner-blast/import` with `Authorization: Bearer $CRON_SECRET`. Weekly blast cron sends 500/week automatically.
+3. **Run "Discover candidates"** — promote the existing prospect pool into partner candidates to
+   work through the lifecycle.
 
-4. **Craigslist daily posts** — cron emails Tyler ready-to-paste copy every day at 8am. Tyler clicks 5 links, pastes, done. ~5 min/day.
+4. **(Free, optional) Angi + Thumbtack + Yelp + Google Business Profile** — free listings, passive.
 
 ---
 

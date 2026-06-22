@@ -41,6 +41,7 @@ type LeadBody = {
   conversation?: unknown;
   source?: string;
   source_detail?: string;
+  partner?: string; // referral partner slug (overrides UTM-derived attribution)
 };
 
 export async function POST(req: NextRequest) {
@@ -150,6 +151,16 @@ export async function POST(req: NextRequest) {
 
         if (!error && dbLead) {
           lead.id = dbLead.id; // use the DB-assigned ID
+
+          // Credit the referral partner (Phase 1 attribution): stamp leads.partner_id
+          // and backfill the matching partner_clicks row so click→lead converts.
+          // Partner slug arrives explicitly as `partner`, or via the UTM source the
+          // referral link set (utmToSourceDetail → source_detail).
+          const partnerSlug = body.partner || lead.source_detail;
+          if (partnerSlug) {
+            const { attributeLeadToPartner } = await import("@/lib/partners");
+            await attributeLeadToPartner(lead.id, partnerSlug).catch(() => {});
+          }
 
           // Log activity
           db.from("activity_log").insert({
