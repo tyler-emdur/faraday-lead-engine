@@ -11,13 +11,22 @@ export const metadata = {
 };
 
 export default async function BlogIndexPage() {
-  const db = getSupabase();
-  const { data: posts } = await db
-    .from("blog_posts")
-    .select("id, title, slug, meta_description, target_keyword, target_city, published_at, created_at")
-    .eq("published", true)
-    .order("published_at", { ascending: false })
-    .limit(50);
+  // Guard so a missing Supabase env at build time can't fail the whole deploy
+  // (prerender of /blog was crashing builds with "supabaseUrl is required").
+  let posts: { id: string; title: string; slug: string; meta_description: string | null; target_keyword: string | null; target_city: string | null; published_at: string | null; created_at: string }[] | null = [];
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const db = getSupabase();
+      ({ data: posts } = await db
+        .from("blog_posts")
+        .select("id, title, slug, meta_description, target_keyword, target_city, published_at, created_at")
+        .eq("published", true)
+        .order("published_at", { ascending: false })
+        .limit(50));
+    } catch {
+      posts = [];
+    }
+  }
 
   const phone = process.env.NEXT_PUBLIC_COMPANY_PHONE || "(720) 766-1518";
 
