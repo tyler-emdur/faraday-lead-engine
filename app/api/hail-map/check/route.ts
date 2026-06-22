@@ -1,10 +1,12 @@
 // GET  /api/hail-map/check?zip=80031 → { hasActivity, mostRecentDate, severity }
-// POST /api/hail-map/check { zip, name, phone, capture:true } → saves lead + Anna texts
+// POST /api/hail-map/check { zip, name, phone, capture:true } → saves lead + notifies Tyler
+// NOTE: The /hail-map page now captures via /api/leads (reliable save + partner
+// attribution). This POST is kept as a no-SMS fallback. No homeowner texting —
+// the system has no SMS; Faraday calls the homeowner after capture.
 
 import { NextRequest, NextResponse } from "next/server";
 import { fetchColoradoAlerts } from "@/lib/nws";
 import { notifyTyler } from "@/lib/notify";
-import { sendSMS } from "@/lib/twilio";
 import { normalizePhone } from "@/lib/phone";
 
 // CO zip→county lookup (Front Range coverage)
@@ -129,24 +131,29 @@ export async function POST(req: NextRequest) {
     }
 
     const phone = normalizePhone(rawPhone) || rawPhone;
-    const firstName = (name || "").split(" ")[0] || "there";
     const county = zipToCounty(zip || "") || "Colorado";
-    const dateStr = mostRecentDate || "recently";
+    const hasActivity = body.hasActivity !== false;
+    const slug: string | undefined = body.partner || body.utm_source || undefined;
 
     let leadId: string | null = null;
+    let saved = false;
 
     if (process.env.SUPABASE_URL) {
       const { getSupabase } = await import("@/lib/supabase");
       const db = getSupabase();
 
-      // Deduplicate by phone
-      const { data: existing } = await db.from("leads").select("id").eq("phone", phone).maybeSingle();
+      // Deduplicate by phone (most recent only — avoids maybeSingle() erroring on dupes)
+      const { data: existing } = await db
+        .from("leads").select("id").eq("phone", phone)
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
 
       if (existing) {
         leadId = existing.id;
-        await db.from("leads").update({ source: "hail-map", zip, status: "contacted" }).eq("id", existing.id);
+        const { error } = await db.from("leads").update({ source: "hail-map", zip }).eq("id", existing.id);
+        if (error) console.error("Hail map lead update failed:", error.message);
+        else saved = true;
       } else {
-        const { data: created } = await db.from("leads").insert({
+        const { data: created, error } = await db.from("leads").insert({
           name: name || null,
           phone,
           zip,
@@ -154,44 +161,33 @@ export async function POST(req: NextRequest) {
           source: "hail-map",
           service: "hail_damage",
           status: "new",
+          notes: mostRecentDate ? `Hail activity ${mostRecentDate} near ${zip}` : null,
         }).select("id").single();
+        if (error) console.error("Hail map lead insert failed:", error.message);
         leadId = created?.id || null;
+        saved = !!leadId;
+      }
+
+      // Credit the referral partner (same attribution as /api/leads)
+      if (leadId && slug) {
+        const { attributeLeadToPartner } = await import("@/lib/partners");
+        await attributeLeadToPartner(leadId, slug).catch(() => {});
       }
 
       await db.from("activity_log").insert({
         type: "lead_captured",
         description: `Hail map lead: ${name || phone} in ${zip}`,
-        metadata: { phone, zip, source: "hail-map" },
+        metadata: { phone, zip, source: "hail-map", partner: slug || null },
       });
     }
 
-    // Anna SMS
-    const hasActivity = body.hasActivity !== false;
-    const sms = hasActivity
-      ? `Hey ${firstName}! I checked hail records for ${zip} — looks like your area was hit ${dateStr}. Want me to schedule a free inspection? Faraday can usually get out within 48 hours. -Anna, Faraday`
-      : `Hey ${firstName}! Our records for ${zip} don't show recent major hail, but a lot of damage goes unreported. A free inspection takes 20 min and costs nothing. Want me to set one up? -Anna, Faraday`;
-
-    await sendSMS(phone, sms).catch(e => console.error("Hail map SMS failed:", e));
-
-    // Notify Tyler
+    // Notify Tyler (ntfy / email / SMS-if-available — no homeowner texting)
     await notifyTyler(
-      `🗺 Hail Map Lead\n${name || "Unknown"} | ${phone}\nZip: ${zip} | ${hasActivity ? "Hail detected" : "No data"}\nAnna texted them`,
+      `🗺 Hail Map Lead\n${name || "Unknown"} | ${phone}\nZip: ${zip} | ${hasActivity ? "Hail detected" : "No data"}${slug ? `\nPartner: ${slug}` : ""}`,
       `🗺 Hail Map — ${name || phone}`
     ).catch(() => {});
 
-    // Save to conversations
-    if (leadId && process.env.SUPABASE_URL) {
-      const { getSupabase } = await import("@/lib/supabase");
-      const { error: convErr } = await getSupabase().from("conversations").insert({
-        lead_id: leadId,
-        channel: "sms",
-        role: "assistant",
-        content: sms,
-      });
-      if (convErr) console.error("Conversation save failed:", convErr.message);
-    }
-
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: saved, saved });
   } catch (e) {
     console.error("Hail map capture error:", e);
     return NextResponse.json({ error: "Failed" }, { status: 500 });

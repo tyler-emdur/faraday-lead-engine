@@ -2,12 +2,19 @@
 
 import { useState } from "react";
 
-type Step = "input" | "loading" | "tease" | "capture" | "done";
+type Step = "input" | "loading" | "tease" | "done";
 
 interface HailResult {
   hasActivity: boolean;
   mostRecentDate: string;
   severity: "low" | "medium" | "high";
+}
+
+// Partner attribution: the referral link redirects here with ?utm_source=<slug>.
+function getPartnerSlug(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  const s = new URLSearchParams(window.location.search).get("utm_source");
+  return s || undefined;
 }
 
 export default function HailMapPage() {
@@ -35,17 +42,33 @@ export default function HailMapPage() {
     setStep("tease");
   };
 
-  const captureAndReveal = async () => {
+  const requestInspection = async () => {
     if (!phone.trim()) { setError("Phone number is required."); return; }
     setError("");
     setSubmitting(true);
+    const slug = getPartnerSlug();
     try {
-      await fetch("/api/hail-map/check", {
+      // Save through the canonical lead path: reliable save + partner attribution + Tyler notify.
+      const res = await fetch("/api/leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ zip, name, phone, capture: true, hasActivity: result?.hasActivity, mostRecentDate: result?.mostRecentDate }),
+        body: JSON.stringify({
+          name: name || undefined,
+          phone,
+          zip,
+          service: "hail_damage",
+          source: "hail-map",
+          source_detail: slug,
+          partner: slug,
+          notes: result?.hasActivity ? `Hail activity near ${zip} (${result?.mostRecentDate || "recent"})` : `Free inspection request — ${zip}`,
+        }),
       });
-    } catch { /* continue anyway */ }
+      if (!res.ok) throw new Error("save failed");
+    } catch {
+      setError("Something went wrong — please call us at (720) 766-1518.");
+      setSubmitting(false);
+      return;
+    }
     setSubmitting(false);
     setStep("done");
   };
@@ -60,13 +83,13 @@ export default function HailMapPage() {
 
         <div className="text-center mb-8">
           <div className="inline-block bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-bold px-3 py-1 rounded-full mb-4">
-            FREE HAIL DAMAGE CHECK
+            FREE ROOF INSPECTION
           </div>
           <h1 className="text-3xl font-black text-white leading-tight">
             Did Hail Hit<br /><span className="text-amber-500">Your Home?</span>
           </h1>
           <p className="text-gray-400 mt-3 text-sm">
-            We monitor NWS weather data across Colorado. Enter your zip to check.
+            We check NWS storm data for your area, then a certified inspector checks your roof — free.
           </p>
         </div>
 
@@ -105,12 +128,8 @@ export default function HailMapPage() {
                   <p className="font-black text-xl">Hail Activity Found Near {zip}</p>
                   <p className="text-sm mt-1 opacity-80">
                     Your area shows hail activity{result.mostRecentDate && result.mostRecentDate !== "recently" ? ` on ${result.mostRecentDate}` : " recently"}.
-                    Your roof may have unreported damage.
+                    Your roof may have unreported damage — a free inspection confirms it.
                   </p>
-                  <div className="mt-3 bg-black/30 rounded-xl px-4 py-2 text-xs">
-                    Full report: estimated damage + claim value →{" "}
-                    <span className="blur-sm select-none">████████████</span>
-                  </div>
                 </>
               ) : (
                 <>
@@ -125,20 +144,23 @@ export default function HailMapPage() {
             </div>
 
             <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
-              <p className="font-bold text-white mb-1">Get your full report</p>
-              <p className="text-gray-400 text-sm mb-4">Anna will text you the complete assessment within 5 minutes.</p>
+              <p className="font-bold text-white mb-1">Book your free roof inspection</p>
+              <p className="text-gray-400 text-sm mb-4">
+                A certified inspector checks your roof for storm damage at no cost. If there&apos;s damage,
+                insurance usually covers the repair — you just pay your deductible. Faraday handles the paperwork.
+              </p>
               <div className="space-y-3">
                 <input value={name} onChange={e => setName(e.target.value)} placeholder="Your first name"
                   className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-600 focus:outline-none focus:border-amber-500/60" />
                 <input value={phone} onChange={e => setPhone(e.target.value)} type="tel" placeholder="Phone number" required
                   className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-600 focus:outline-none focus:border-amber-500/60" />
                 {error && <p className="text-red-400 text-xs">{error}</p>}
-                <button onClick={captureAndReveal} disabled={submitting}
+                <button onClick={requestInspection} disabled={submitting}
                   className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-black font-black py-3.5 rounded-xl transition-colors">
-                  {submitting ? "Checking..." : "Text Me My Report →"}
+                  {submitting ? "Submitting..." : "Request My Free Inspection →"}
                 </button>
                 <p className="text-gray-600 text-xs text-center">
-                  By submitting you agree to receive SMS from Faraday Construction. Reply STOP to opt out.
+                  By submitting you agree to be contacted by Faraday Construction about your free inspection.
                 </p>
               </div>
             </div>
@@ -148,14 +170,14 @@ export default function HailMapPage() {
         {step === "done" && (
           <div className="text-center">
             <div className="text-5xl mb-4">✅</div>
-            <h2 className="text-2xl font-black text-white mb-2">Report Sent!</h2>
+            <h2 className="text-2xl font-black text-white mb-2">You&apos;re all set!</h2>
             <p className="text-gray-400 mb-6">
-              Anna is texting you the full hail report for {zip} right now.
-              If damage is likely, she can have an inspector out within 48 hours.
+              Faraday Construction will call you shortly to schedule your free roof inspection for {zip}.
+              If damage is found, they handle the entire insurance claim for you.
             </p>
             <a href="tel:7207661518"
               className="block w-full bg-amber-500 hover:bg-amber-400 text-black font-black py-4 rounded-2xl transition-colors text-lg mb-3">
-              📞 Call Now: (720) 766-1518
+              📞 Prefer to talk now? Call (720) 766-1518
             </a>
             <p className="text-gray-600 text-xs">Free inspection · No obligation · Insurance usually covers 100%</p>
           </div>
