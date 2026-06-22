@@ -55,17 +55,6 @@ interface Storm {
   detected_at: string;
 }
 
-interface CronLog {
-  id: string;
-  cron_name: string;
-  started_at: string;
-  finished_at?: string;
-  duration_ms?: number;
-  result?: string;
-  error?: string;
-  leads_generated?: number;
-}
-
 interface Appointment {
   id: string;
   lead_id: string;
@@ -78,7 +67,7 @@ interface Appointment {
   lead?: Lead;
 }
 
-type Tab = "leads" | "submissions" | "outreach" | "crons" | "storms";
+type Tab = "leads" | "outreach" | "storms";
 
 interface ContactFormItem {
   id: string;
@@ -342,7 +331,6 @@ export default function AdminPage() {
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [storms, setStorms] = useState<Storm[]>([]);
-  const [cronLogs, setCronLogs] = useState<CronLog[]>([]);
   const [contactForms, setContactForms] = useState<ContactFormItem[]>([]);
   const [outreachProspects, setOutreachProspects] = useState<OutreachProspect[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -386,10 +374,6 @@ export default function AdminPage() {
         const r = await fetch("/api/storms");
         const d = await r.json();
         setStorms(d.storms || []);
-      } else if (t === "crons") {
-        const r = await fetch("/api/admin/cron-logs");
-        const d = await r.json();
-        setCronLogs(d.logs || []);
       }
     } finally {
       setLoading(false);
@@ -453,8 +437,7 @@ export default function AdminPage() {
     return true;
   });
 
-  const approved = leads.filter(l => l.accepted);
-  const TABS: Tab[] = ["leads", "submissions", "outreach", "crons", "storms"];
+  const TABS: Tab[] = ["leads", "outreach", "storms"];
 
   const updateFormStatus = async (id: string, status: "sent" | "skipped") => {
     await fetch("/api/admin/outreach", {
@@ -471,24 +454,6 @@ export default function AdminPage() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // Cron schedule windows (expected run intervals in minutes)
-  const CRON_WINDOWS: Record<string, number> = {
-    "storm-check": 35, "follow-up": 70,
-    "outbound-prospect": 60 * 8,
-    "review-request": 60 * 25, "weekly-report": 60 * 24 * 7,
-    "intel-digest": 60 * 25, "permit-monitor": 60 * 25,
-    "fema-monitor": 60 * 13, "prospect-scraper": 60 * 24 * 7,
-    "bid-monitor": 60 * 25, "competitor-reviews": 60 * 24 * 7,
-    "listing-monitor": 60 * 25, "contact-form-targets": 60 * 24 * 7,
-  };
-
-  const latestByName: Record<string, CronLog> = {};
-  for (const log of cronLogs) {
-    if (!latestByName[log.cron_name] || new Date(log.started_at) > new Date(latestByName[log.cron_name].started_at)) {
-      latestByName[log.cron_name] = log;
-    }
-  }
-
   return (
     <div className="min-h-screen bg-gray-950 text-white">
       {/* Header */}
@@ -499,9 +464,13 @@ export default function AdminPage() {
             {TABS.map(t => (
               <button key={t} onClick={() => setTab(t)}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium capitalize transition-colors ${tab === t ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" : "text-gray-400 hover:text-white hover:bg-gray-800"}`}>
-                {t === "crons" ? "Cron Health" : t === "outreach" ? "Outreach" : t}
+                {t}
               </button>
             ))}
+            <a href="/admin/partners"
+              className="px-3 py-1.5 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">
+              Partners
+            </a>
           </div>
         </div>
       </header>
@@ -604,40 +573,6 @@ export default function AdminPage() {
                 {filteredLeads.length === 0 && <p className="text-center py-12 text-gray-600">No leads match your filters.</p>}
               </div>
             )}
-          </>
-        )}
-
-        {/* ── SUBMISSIONS ───────────────────────────────────────────────────── */}
-        {tab === "submissions" && (
-          <>
-            <div className="bg-gray-900 border border-green-800/40 rounded-xl p-5 mb-6">
-              <p className="text-2xl font-black text-green-400">{approved.length} leads approved = ${approved.length * 100} earned</p>
-              <p className="text-gray-500 text-sm mt-1">All-time · $100 per approved warm lead</p>
-            </div>
-            <div className="overflow-x-auto rounded-xl border border-gray-800">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-800 bg-gray-900/50">
-                    {["Date Approved","Name","Phone","Partner","Zip","Source"].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-semibold uppercase">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {approved.sort((a,b) => new Date(b.accepted_at || b.created_at).getTime() - new Date(a.accepted_at || a.created_at).getTime()).map(l => (
-                    <tr key={l.id} className="border-b border-gray-800/40">
-                      <td className="px-4 py-3 text-gray-400 text-xs">{l.accepted_at ? new Date(l.accepted_at).toLocaleDateString() : "—"}</td>
-                      <td className="px-4 py-3 font-medium">{l.name || "—"}</td>
-                      <td className="px-4 py-3 text-gray-300">{l.phone || "—"}</td>
-                      <td className="px-4 py-3 text-amber-400 text-xs">{partnerName(l) || "—"}</td>
-                      <td className="px-4 py-3 text-gray-400">{l.zip || l.city || "—"}</td>
-                      <td className="px-4 py-3 text-gray-500 text-xs capitalize">{l.source?.replace(/_/g," ") || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {approved.length === 0 && <p className="text-center py-12 text-gray-600">No approved leads yet.</p>}
-            </div>
           </>
         )}
 
@@ -792,57 +727,6 @@ export default function AdminPage() {
             </>
           );
         })()}
-
-        {/* ── CRON HEALTH ───────────────────────────────────────────────────── */}
-        {tab === "crons" && (
-          <>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold">Cron Health Monitor</h2>
-              <button onClick={() => load("crons")} className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 px-3 py-1.5 rounded-lg text-sm transition-colors">Refresh</button>
-            </div>
-            {loading ? <div className="text-center py-16 text-gray-500">Loading...</div> : (
-              <div className="space-y-2">
-                {Object.entries(CRON_WINDOWS).map(([name, windowMin]) => {
-                  const log = latestByName[name];
-                  const lastRun = log ? new Date(log.started_at) : null;
-                  const minsAgo = lastRun ? Math.round((Date.now() - lastRun.getTime()) / 60000) : null;
-                  const overdue = minsAgo !== null && minsAgo > windowMin;
-                  const hasError = log?.result === "error";
-                  const statusColor = !log ? "border-gray-700 bg-gray-900" :
-                    hasError ? "border-red-800 bg-red-950/20" :
-                    overdue ? "border-amber-800 bg-amber-950/20" :
-                    "border-green-800/40 bg-green-950/10";
-                  const dot = !log ? "bg-gray-600" : hasError ? "bg-red-500" : overdue ? "bg-amber-500" : "bg-green-500";
-
-                  return (
-                    <div key={name} className={`border rounded-xl px-4 py-3 flex items-center gap-4 ${statusColor}`}>
-                      <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${dot}`} />
-                      <div className="flex-1 min-w-0">
-                        <p className="font-mono text-sm text-white">{name}</p>
-                        {log && <p className="text-xs text-gray-500">
-                          {lastRun?.toLocaleString()} · {log.duration_ms ? `${(log.duration_ms / 1000).toFixed(1)}s` : "—"}
-                          {log.leads_generated ? ` · ${log.leads_generated} leads` : ""}
-                        </p>}
-                        {log?.error && <p className="text-xs text-red-400 truncate">{log.error}</p>}
-                      </div>
-                      <div className="text-right flex-shrink-0">
-                        <p className="text-xs text-gray-400">
-                          {minsAgo !== null ? (minsAgo < 60 ? `${minsAgo}m ago` : `${Math.round(minsAgo/60)}h ago`) : "Never ran"}
-                        </p>
-                        <p className={`text-xs font-semibold ${!log ? "text-gray-500" : hasError ? "text-red-400" : overdue ? "text-amber-400" : "text-green-400"}`}>
-                          {!log ? "NEVER RAN" : hasError ? "ERROR" : overdue ? "OVERDUE" : "OK"}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
-                {Object.keys(CRON_WINDOWS).length === 0 && cronLogs.length === 0 && (
-                  <p className="text-center py-12 text-gray-600">No cron logs yet. Logs appear after the first run.</p>
-                )}
-              </div>
-            )}
-          </>
-        )}
 
         {/* ── STORMS ────────────────────────────────────────────────────────── */}
         {tab === "storms" && (
