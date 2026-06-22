@@ -11,7 +11,6 @@ interface StormStatus {
   total_leads_24h: number;
   sms_blasts_sent: number;
   leads_reengaged: number;
-  blogs_posted: number;
   ads_created: number;
   active_subscribers: number;
   last_storm_check: string | null;
@@ -115,7 +114,6 @@ export default function StormLiveStatus() {
       {/* Action status row */}
       <div className="flex flex-wrap gap-2">
         {[
-          { label: `${status.blogs_posted} blog${status.blogs_posted !== 1 ? "s" : ""} posted`, ok: status.blogs_posted > 0 },
           { label: `${status.ads_created} ad${status.ads_created !== 1 ? "s" : ""} created`, ok: status.ads_created > 0 },
           { label: `${status.recent_storms_7d} storm${status.recent_storms_7d !== 1 ? "s" : ""} this week`, ok: status.recent_storms_7d > 0 },
           { label: status.last_storm_check ? `Cron ${status.last_storm_check_result || "ok"} ${timeAgo(status.last_storm_check)}` : "Cron never ran", ok: status.last_storm_check_result === "success" },

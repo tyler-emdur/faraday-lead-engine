@@ -23,7 +23,7 @@ const PIPELINE_STAGES = [
     id: "reach",
     label: "REACH",
     description: "Making contact",
-    crons: ["prospect-scraper", "outbound-prospect", "contact-form-targets", "blog-generate"],
+    crons: ["prospect-scraper", "outbound-prospect", "contact-form-targets"],
   },
   {
     id: "nurture",
@@ -53,7 +53,6 @@ const CRON_JOBS = [
   { name: "prospect-scraper",       label: "Prospect Scraper",       schedule: "Monday 6am",      stage: "reach"  },
   { name: "outbound-prospect",      label: "Cold Email Engine",      schedule: "M/W/F 9am+2pm",  stage: "reach"  },
   { name: "contact-form-targets",   label: "Form Auto-Submitter",    schedule: "Monday 7am",      stage: "reach"  },
-  { name: "blog-generate",          label: "SEO Blog Writer",        schedule: "Monday 9am",      stage: "reach"  },
   // NURTURE
   { name: "follow-up",              label: "Lead Follow-up Drip",    schedule: "Every hour",      stage: "nurture"},
   { name: "intel-digest",           label: "Intel Digest",           schedule: "Daily 2pm",       stage: "nurture"},
@@ -72,7 +71,7 @@ export async function GET() {
 
   const [
     cronLogsRes, leadsRes, outboundRes, contactQueueRes,
-    opportunitiesRes, blogRes, stormRes, metaAdsRes,
+    opportunitiesRes, stormRes, metaAdsRes,
   ] = await Promise.allSettled([
     db.from("cron_logs")
       .select("cron_name, started_at, finished_at, result, leads_generated, actions_taken, duration_ms, error")
@@ -98,11 +97,6 @@ export async function GET() {
       .order("created_at", { ascending: false })
       .limit(30),
 
-    db.from("blog_posts")
-      .select("id, title, slug, published_at, created_at, target_keyword")
-      .order("created_at", { ascending: false })
-      .limit(8),
-
     db.from("storm_events")
       .select("id, affected_cities, hail_size_inches, detected_at, zip_codes")
       .order("detected_at", { ascending: false })
@@ -119,7 +113,6 @@ export async function GET() {
   const prospects = outboundRes.status === "fulfilled" ? (outboundRes.value.data ?? []) : [];
   const contactQueue = contactQueueRes.status === "fulfilled" ? (contactQueueRes.value.data ?? []) : [];
   const opportunities = opportunitiesRes.status === "fulfilled" ? (opportunitiesRes.value.data ?? []) : [];
-  const blogPosts = blogRes.status === "fulfilled" ? (blogRes.value.data ?? []) : [];
   const stormEvents = stormRes.status === "fulfilled" ? (stormRes.value.data ?? []) : [];
   const metaAds = metaAdsRes.status === "fulfilled" ? (metaAdsRes.value.data ?? []) : [];
 
@@ -240,11 +233,6 @@ export async function GET() {
       total: opportunities.length,
       high_priority: opportunities.filter(o => o.priority === "high").length,
       recent: opportunities.filter(o => o.status === "new").slice(0, 10),
-    },
-
-    blog: {
-      posts_total: blogPosts.length,
-      recent: blogPosts,
     },
 
     storm: {

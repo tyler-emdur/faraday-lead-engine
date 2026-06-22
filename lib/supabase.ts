@@ -8,7 +8,7 @@ export function getSupabase() {
   );
 }
 
-// Client-side client (limited access — only for public blog reads)
+// Client-side client (limited access — anon key, for public reads from the browser)
 export function getPublicSupabase() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

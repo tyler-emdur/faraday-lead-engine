@@ -1,10 +1,10 @@
-import ChatWidget from "@/components/ChatWidget";
 import ExitIntentPopup from "@/components/ExitIntentPopup";
 import QuickCaptureForm from "@/components/QuickCaptureForm";
 import FloatingChat from "@/components/FloatingChat";
 import StormBanner from "@/components/StormBanner";
 import InsuranceEstimator from "@/components/InsuranceEstimator";
 import ActivityTicker from "@/components/ActivityTicker";
+import ChatSection from "@/components/ChatSection";
 
 const REVIEWS = [
   {
@@ -95,13 +95,38 @@ export default function HomePage() {
 
       {/* ─── NAV ─── */}
       <nav className="sticky top-0 z-40 border-b border-gray-800/60 bg-gray-950/90 backdrop-blur-sm">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+          {/* Logo */}
+          <a href="/" className="flex items-center gap-2 shrink-0">
             <span className="text-amber-500 text-xl font-black tracking-tight">FARADAY</span>
             <span className="text-gray-500 text-sm hidden sm:block">Construction</span>
+          </a>
+
+          {/* Classic service links — hidden on mobile */}
+          <div className="hidden md:flex items-center gap-1">
+            {[
+              { label: "Hail Damage", href: "#estimate" },
+              { label: "Roofing",     href: "#estimate" },
+              { label: "Solar",       href: "#estimate" },
+              { label: "Windows",     href: "#estimate" },
+            ].map(({ label, href }) => (
+              <a
+                key={label}
+                href={href}
+                className="text-gray-400 hover:text-white text-sm px-3 py-1.5 rounded-lg hover:bg-gray-800/60 transition-all"
+              >
+                {label}
+              </a>
+            ))}
           </div>
-          <div className="flex items-center gap-3 sm:gap-5">
-            <a href="#chat" className="hidden sm:block text-gray-400 hover:text-white text-sm transition-colors">
+
+          {/* Right side: Anna option + phone */}
+          <div className="flex items-center gap-2 shrink-0">
+            <a
+              href="#chat"
+              className="hidden sm:flex items-center gap-1.5 text-gray-400 hover:text-amber-400 border border-gray-700 hover:border-amber-500/50 text-sm px-3 py-1.5 rounded-lg transition-all"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
               Chat with Anna
             </a>
             <a
@@ -111,7 +136,8 @@ export default function HomePage() {
               <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/>
               </svg>
-              {phone}
+              <span className="hidden sm:inline">{phone}</span>
+              <span className="sm:hidden">Call</span>
             </a>
           </div>
         </div>
@@ -281,15 +307,9 @@ export default function HomePage() {
       </section>
 
       {/* ─── ANNA CHAT ─── */}
-      {/* Catches everyone who didn't fill the hero form — available 24/7 */}
       <section className="border-t border-gray-800/60 bg-gray-900/20" id="chat">
-        <div className="max-w-6xl mx-auto px-4 py-14">
+        <div className="max-w-2xl mx-auto px-4 py-14">
           <div className="text-center mb-8">
-            <div className="inline-flex items-center gap-2 mb-4">
-              <div className="w-8 h-8 rounded-full bg-amber-500 flex items-center justify-center text-black font-black text-sm">A</div>
-              <div className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span className="text-emerald-400 text-sm font-medium">Anna is online now</span>
-            </div>
             <h2 className="text-2xl md:text-3xl font-bold text-white mb-3">
               Still Have Questions?
             </h2>
@@ -297,7 +317,7 @@ export default function HomePage() {
               Anna answers in seconds — service costs, insurance questions, scheduling. Available 24/7.
             </p>
           </div>
-          <ChatWidget source="website" />
+          <ChatSection />
         </div>
       </section>
 
@@ -337,7 +357,6 @@ export default function HomePage() {
           <div className="border-t border-gray-800/60 pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-700">
             <span>© {new Date().getFullYear()} Faraday Construction. Licensed &amp; Insured in Colorado.</span>
             <div className="flex items-center gap-4">
-              <a href="/blog" className="hover:text-gray-500 transition-colors">Blog</a>
               <a href="/hail-map" className="hover:text-gray-500 transition-colors">Storm Tracker</a>
               <a href="/storm-alerts" className="hover:text-gray-500 transition-colors">Free Hail Alerts</a>
               <a href="/admin" className="hover:text-gray-500 transition-colors">Admin</a>

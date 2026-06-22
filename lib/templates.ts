@@ -411,7 +411,6 @@ export interface WeeklyStats {
   byService: Record<string, number>;
   followUpsSent: number;
   stormsDetected: number;
-  blogPostsPublished: number;
   estimatedPipeline: number;
 }
 
@@ -465,13 +464,9 @@ export function weeklyReportEmail(stats: WeeklyStats) {
               <td style="padding:8px 4px;color:#666;">📧📱 Follow-ups sent</td>
               <td style="padding:8px 4px;">${stats.followUpsSent}</td>
             </tr>
-            <tr style="border-bottom:1px solid #f0f0f0;">
+            <tr>
               <td style="padding:8px 4px;color:#666;">🌨️ Storms detected</td>
               <td style="padding:8px 4px;">${stats.stormsDetected}</td>
-            </tr>
-            <tr>
-              <td style="padding:8px 4px;color:#666;">📝 Blog posts published</td>
-              <td style="padding:8px 4px;">${stats.blogPostsPublished}</td>
             </tr>
           </table>
 

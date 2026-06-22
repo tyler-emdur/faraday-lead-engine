@@ -7,6 +7,7 @@
 // Adds up to 60 new prospects per run (up from 20 with Google Places).
 
 import { NextRequest, NextResponse } from "next/server";
+import { hasMXRecord } from "@/lib/resend";
 
 export const maxDuration = 60;
 
@@ -144,12 +145,37 @@ async function googlePlacesDetails(placeId: string): Promise<{
   } catch { return null; }
 }
 
-function guessEmail(name: string, website?: string): string | null {
+// Scrape the company's website for a real email address — mailto: links are authoritative.
+// Falls back to guessing info@ on the domain only if no email is found.
+async function resolveEmail(website: string | null | undefined): Promise<{ email: string; status: "scraped" | "inferred" } | null> {
   if (!website) return null;
+  const url = website.startsWith("http") ? website : `https://${website}`;
+  let domain: string;
+  try { domain = new URL(url).hostname.replace(/^www\./, ""); }
+  catch { return null; }
+
+  // Try to scrape a real email from the website
   try {
-    const domain = new URL(website.startsWith("http") ? website : `https://${website}`).hostname.replace(/^www\./, "");
-    return `contact@${domain}`;
-  } catch { return null; }
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(4000),
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1)" },
+    });
+    if (res.ok) {
+      const html = await res.text();
+      // mailto: links are the most reliable signal
+      const mailto = html.match(/mailto:([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/i);
+      if (mailto) {
+        const found = mailto[1].toLowerCase();
+        // Skip noreply/donotreply and emails on different domains (CDN artifacts)
+        if (!found.includes("noreply") && !found.includes("donotreply") && found.endsWith(`@${domain}`)) {
+          return { email: found, status: "scraped" };
+        }
+      }
+    }
+  } catch { /* timeout or fetch error — fall through to guess */ }
+
+  // Infer info@ on the domain as a last resort
+  return { email: `info@${domain}`, status: "inferred" };
 }
 
 function extractCity(address: string): string {
@@ -206,10 +232,9 @@ export async function GET(req: NextRequest) {
       for (const place of places) {
         const details = await googlePlacesDetails(place.place_id);
         if (!details) continue;
-        const email = guessEmail(details.name, details.website);
         prospects.push({
           name: details.name,
-          email,
+          email: null, // resolved below
           phone: details.phone,
           website: details.website,
           city: extractCity(details.formatted_address),
@@ -221,14 +246,23 @@ export async function GET(req: NextRequest) {
     results.source = "overpass+google";
   }
 
-  // ── Insert new prospects ─────────────────────────────────────────────────────
+  // ── Insert new prospects (with email resolution + MX gate) ──────────────────
   for (const p of prospects) {
     if (results.added >= 60) break;
 
-    // Determine the email to use for dedup
-    const email = p.email || (p.website ? guessEmail(p.name, p.website || undefined) : null);
-    if (!email) { results.skipped++; continue; }
-    if (existingEmails.has(email.toLowerCase())) { results.skipped++; continue; }
+    // 1. If OSM gave us a real email, use it. Otherwise scrape the website.
+    const resolved = p.email
+      ? { email: p.email, status: "scraped" as const }
+      : await resolveEmail(p.website);
+
+    if (!resolved) { results.skipped++; continue; }
+
+    const email = resolved.email.toLowerCase();
+    if (existingEmails.has(email)) { results.skipped++; continue; }
+
+    // 2. MX gate — discard any address whose domain has no working mail server
+    const mxOk = await hasMXRecord(email);
+    if (!mxOk) { results.skipped++; continue; }
 
     const { error: insertErr } = await db.from("outbound_prospects").insert({
       email,
@@ -243,7 +277,8 @@ export async function GET(req: NextRequest) {
         phone: p.phone,
         website: p.website,
         prospect_type: p.type,
-        added_by: "prospect_scraper_overpass",
+        email_status: resolved.status, // "scraped" | "inferred"
+        added_by: "prospect_scraper",
       },
     });
 
@@ -253,7 +288,7 @@ export async function GET(req: NextRequest) {
       }
       results.skipped++;
     } else {
-      existingEmails.add(email.toLowerCase());
+      existingEmails.add(email);
       results.added++;
     }
   }

@@ -198,11 +198,18 @@ export async function POST(req: NextRequest) {
     try {
       parsed = JSON.parse(clean);
     } catch {
-      // Extract JSON from the response if model added surrounding text
+      // Model added text before/after JSON — extract the JSON blob
       const match = clean.match(/\{[\s\S]*\}/);
       if (match) {
         try {
           parsed = JSON.parse(match[0]);
+          // If the JSON has no message field but does have Anna response keys,
+          // use the text before the JSON block as the message
+          if (parsed && typeof parsed.message !== "string" && (parsed.data !== undefined || parsed.chips !== undefined)) {
+            const jsonStart = clean.indexOf(match[0]);
+            const textBefore = clean.slice(0, jsonStart).trim();
+            if (textBefore) parsed.message = textBefore;
+          }
         } catch {
           parsed = null;
         }
@@ -210,14 +217,19 @@ export async function POST(req: NextRequest) {
     }
 
     if (!parsed || typeof parsed.message !== "string") {
+      // Strip any JSON blobs from the raw text before returning as message
+      const stripped = clean.replace(/\s*\{(?:[^{}]|\{[^{}]*\})*\}/g, "").trim();
       return NextResponse.json(
-        { message: clean || "Sorry, quick hiccup! Can you try again?", data: {}, complete: false, chips: [] },
+        { message: stripped || "Sorry, quick hiccup! Can you try again?", data: {}, complete: false, chips: [] },
         { status: 200 }
       );
     }
 
-    // Strip any {"chips":[...]} JSON that the model accidentally embedded in the message text
-    parsed.message = parsed.message.replace(/\s*\{"chips":\s*\[[^\]]*\]\}/g, "").trim();
+    // Strip any leaked JSON objects from the message text (chips, data blobs, etc.)
+    parsed.message = parsed.message
+      .replace(/\s*\{(?:[^{}]|\{[^{}]*\})*"(?:chips|data|complete)"(?:[^{}]|\{[^{}]*\})*\}/g, "")
+      .replace(/\s*\{"chips":\s*\[[^\]]*\]\}/g, "")
+      .trim();
 
     if (!Array.isArray(parsed.chips)) parsed.chips = [];
 

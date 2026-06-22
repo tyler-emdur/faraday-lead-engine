@@ -86,10 +86,6 @@ interface StatusData {
     high_priority: number;
     recent: Opportunity[];
   };
-  blog: {
-    posts_total: number;
-    recent: Array<{ title: string; created_at: string; target_keyword: string | null }>;
-  };
   storm: {
     last_detected: { cities: string[]; hail_size_inches: number | null; detected_at: string } | null;
     hours_ago: number | null;
@@ -140,7 +136,7 @@ const STAGES = [
       bar: "bg-blue-500",
       glow: "shadow-blue-900/60",
     },
-    systems: ["Prospect Scraper", "Cold Email Engine", "Form Auto-Submitter", "SEO Blog Writer"],
+    systems: ["Prospect Scraper", "Cold Email Engine", "Form Auto-Submitter"],
   },
   {
     id: "nurture",
@@ -210,7 +206,6 @@ function cronEventNarrative(log: CronLog): string {
     "prospect-scraper":     "Scraped OSM Overpass API for referral partners",
     "outbound-prospect":    "Sent personalized cold emails to referral targets",
     "contact-form-targets": "Auto-submitted contact forms for no-email prospects",
-    "blog-generate":        "Published SEO blog content for Front Range searches",
     "follow-up":            "Sent drip follow-ups to captured leads",
     "intel-digest":         "Emailed Tyler the top opportunities digest",
     "meta-ad-cleanup":      "Checked Facebook storm ads for auto-pause",
@@ -239,7 +234,6 @@ function stageOf(cronName: string): StageId {
     "competitor-reviews": "detect", "listing-monitor": "detect", "hoa-violations": "detect",
     "hail-damage-unclaimed": "detect", "fema-monitor": "detect", "bid-monitor": "detect",
     "prospect-scraper": "reach", "outbound-prospect": "reach", "contact-form-targets": "reach",
-    "blog-generate": "reach",
     "follow-up": "nurture", "intel-digest": "nurture", "meta-ad-cleanup": "nurture",
     "review-request": "win", "weekly-report": "win",
   };
@@ -824,36 +818,6 @@ export default function AnnaWarRoom() {
                 Outbound Pipeline — {data.outbound.total_prospects.toLocaleString()} prospects loaded
               </h2>
               <OutboundBreakdown outbound={data.outbound} contactForms={data.contact_forms} />
-            </div>
-
-            {/* Blog + SEO */}
-            <div className="bg-gray-900/50 border border-gray-800 rounded-xl p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xs font-mono font-bold text-gray-400 uppercase tracking-widest">SEO Content</h2>
-                <span className="text-[10px] text-gray-600 font-mono">{data.blog.posts_total} total posts</span>
-              </div>
-              {data.blog.recent.length === 0 ? (
-                <div className="text-xs text-gray-600 py-4 text-center">
-                  Blog generator runs Mondays — posts appear here.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {data.blog.recent.map((post, i) => (
-                    <div key={i} className="flex items-start gap-2 py-1.5 border-b border-gray-800/50 last:border-0">
-                      <div className="w-1 h-1 rounded-full bg-violet-500 flex-shrink-0 mt-1.5" />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs text-gray-300 leading-tight truncate">{post.title}</div>
-                        {post.target_keyword && (
-                          <div className="text-[10px] text-gray-600 font-mono mt-0.5">
-                            /{post.target_keyword}/
-                          </div>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-gray-600 font-mono flex-shrink-0">{timeAgo(post.created_at)}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           </div>
 

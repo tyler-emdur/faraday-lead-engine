@@ -30,14 +30,12 @@ export async function GET() {
   // Aggregate action counts from last storm-check cron runs
   let totalSmsBlasts = 0;
   let totalReengaged = 0;
-  let totalBlogsPosted = 0;
   let adsCreated = 0;
 
   for (const run of cronRuns) {
     const meta = (run.metadata || {}) as Record<string, unknown>;
     totalSmsBlasts += Number(meta.sms_blasts_sent ?? 0);
     totalReengaged += Number(meta.leads_reengaged ?? 0);
-    if (meta.blog_published) totalBlogsPosted++;
     if (meta.ads_created) adsCreated++;
   }
 
@@ -62,7 +60,6 @@ export async function GET() {
     total_leads_24h: leads24h.length,
     sms_blasts_sent: totalSmsBlasts,
     leads_reengaged: totalReengaged,
-    blogs_posted: totalBlogsPosted,
     ads_created: adsCreated,
     active_subscribers: subscribers.length,
     last_storm_check: cronRuns[0]?.started_at || null,

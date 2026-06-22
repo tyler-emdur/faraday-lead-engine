@@ -67,7 +67,13 @@
       "Bash(dig +short CNAME leads.faradaysun.com)",
       "Bash(tee /tmp/vercel_inbound_logs.txt)",
       "Bash(kill 89993 89976)",
-      "Bash(npx vercel *)"
+      "Bash(npx vercel *)",
+      "Bash(echo \"Raw: $\\(curl -s -H 'Authorization: Bearer faraday-cron-e64204e19f6d9326b24ee9e4' https://leads.faradaysun.com/api/anna/status\\)\")",
+      "Bash(gh run *)",
+      "Bash(npx next *)",
+      "Bash(dig TXT faradayleads.com +short)",
+      "Bash(dig TXT _dmarc.faradayleads.com +short)",
+      "Bash(dig MX faradayleads.com +short)"
     ]
   }
 }

@@ -69,6 +69,19 @@ export async function POST(req: NextRequest) {
   try {
     const payload: ResendWebhook = await req.json();
 
+    // Handle bounce events — mark prospect do_not_contact automatically
+    if (payload.type === "email.bounced") {
+      const bouncedEmail = Array.isArray(payload.data.to) ? payload.data.to[0] : payload.data.to;
+      if (bouncedEmail) {
+        const db = getSupabase();
+        await db.from("outbound_prospects")
+          .update({ status: "do_not_contact" })
+          .eq("email", bouncedEmail);
+        console.log(`Bounce webhook: marked ${bouncedEmail} as do_not_contact`);
+      }
+      return NextResponse.json({ success: true });
+    }
+
     // Verify it's an email received event
     if (payload.type !== "email.received") {
       return NextResponse.json({ success: true });

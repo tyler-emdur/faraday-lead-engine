@@ -78,14 +78,6 @@ export interface StormMessageParams {
   date: string;
 }
 
-export interface BlogPostResult {
-  title: string;
-  slug: string;
-  content: string;
-  metaDescription: string;
-  keyword: string;
-}
-
 // ─── AI Client ───────────────────────────────────────────────────────────────
 
 function getClient(): OpenAI {
@@ -464,61 +456,6 @@ Respond with ONLY the SMS text.`;
   );
 
   return result || fallback;
-}
-
-// ─── Blog Post Generator ──────────────────────────────────────────────────────
-
-export async function generateBlogPost(keyword: string, city = "Colorado"): Promise<BlogPostResult> {
-  const slug = keyword.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-
-  const SYSTEM = `You are a professional SEO content writer for Faraday Construction — a Colorado roofing company specializing in hail damage.
-
-Write a 1,200–1,800 word blog post targeting this keyword: "${keyword}"
-
-STRUCTURE:
-1. H1 title (compelling, keyword-rich)
-2. Intro paragraph (hook with a local angle)
-3. 4–6 H2 sections covering the topic thoroughly
-4. Use bullet points in 1–2 sections
-5. Mid-post CTA: "Was your home affected? Get a free inspection →" linking to /hail-map
-6. Closing paragraph with natural CTA to call (720) 766-1518
-7. No promotional fluff — genuinely helpful content
-
-Return ONLY valid JSON (no backticks):
-{
-  "title": "...",
-  "metaDescription": "155-160 char meta description with keyword",
-  "content": "full markdown content here"
-}`;
-
-  const raw = await complete(
-    [
-      { role: "system", content: SYSTEM },
-      { role: "user", content: `Keyword: "${keyword}", Primary city: ${city}` },
-    ],
-    3000,
-    0.5
-  );
-
-  try {
-    const clean = raw.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(clean.match(/\{[\s\S]*\}/)?.[0] || clean);
-    return {
-      title: parsed.title || `${keyword} — Faraday Construction`,
-      slug,
-      content: parsed.content || raw,
-      metaDescription: parsed.metaDescription || `Learn about ${keyword} from Colorado's top roofing company.`,
-      keyword,
-    };
-  } catch {
-    return {
-      title: `${keyword} | Faraday Construction`,
-      slug,
-      content: raw,
-      metaDescription: `${keyword} — expert advice from Colorado's top roofing company.`,
-      keyword,
-    };
-  }
 }
 
 // ─── Review Request Generator ─────────────────────────────────────────────────

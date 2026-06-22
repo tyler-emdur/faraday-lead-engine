@@ -56,9 +56,16 @@ Do not build or suggest features in these areas.
 violates Resend AUP (flagged the account) and is replaced by the warm partner network. Do not
 re-enable cold outreach. **homeowner-blast** requires a purchased list (violates $0) — leave off.
 
-## Disabled crons (removed — generated zero lead page traffic)
+## Removed (deleted from codebase — no blog anymore)
 
-blog-generate, prospect-scraper, contact-form-targets, competitor-reviews, listing-monitor, permit-monitor, fema-monitor, bid-monitor, hoa-violations, hail-damage-unclaimed, meta-ad-cleanup, weekly-report, review-request, follow-up, intel-digest
+The entire blog/SEO system is gone: `app/blog`, `app/api/blog`, the `blog-generate`
+cron, `lib/blog-keywords.ts`, and the blog-coupled disabled crons `fema-monitor` and
+`hoa-violations` (they existed mainly to auto-publish blog posts), plus `weekly-report`.
+Do not reintroduce blog content — it generated zero lead-page traffic.
+
+## Disabled crons (route files still present, not scheduled)
+
+prospect-scraper, contact-form-targets, competitor-reviews, listing-monitor, permit-monitor, bid-monitor, hail-damage-unclaimed, meta-ad-cleanup, review-request, follow-up, intel-digest
 
 ---
 

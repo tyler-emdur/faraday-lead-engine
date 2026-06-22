@@ -10,7 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase";
-import { sendEmail } from "@/lib/resend";
+import { sendEmail, hasMXRecord, hasDomainPresence, isRoleAddress } from "@/lib/resend";
 import OpenAI from "openai";
 import { cronRunner } from "@/lib/logger";
 
@@ -31,9 +31,13 @@ RULES:
 - Keep it under 4 sentences.
 - Extremely casual but professional. NO marketing speak.
 - Sounds like a quick note typed on a phone.
-- Always include their name and company.
+- Address them by company name (e.g. "Hi [Company],"). If a separate first name is given, use that instead.
+- Never write "Hey [X] at [X]" — do not repeat the same name twice.
+- End every sentence with a period. Do not chain sentences with commas.
 - Ask a single easy-to-answer question at the end.
 - No formatting, no bold, no markdown. Plain text only.
+- Do not use the word "easy" anywhere in the subject or body.
+- Subject lines must be specific and direct — max 8 words. No generic openers like "quick intro" or "following up".
 - Sign off as: - Anna
 
 Respond ONLY with a JSON object: {"subject": "...", "body": "..."}`;
@@ -221,12 +225,38 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ success: true, message: "No prospects due for outreach.", prospects_checked: allCandidates.length });
   }
 
+  // MX + domain presence validation — skip addresses with no mail server or no real website
+  const mxChecked = await Promise.all(
+    prospects.map(async (p) => {
+      const email = p.email as string;
+      const [mx, presence] = await Promise.all([hasMXRecord(email), hasDomainPresence(email)]);
+      return { p, ok: mx && presence };
+    })
+  );
+  const badEmails = mxChecked.filter(r => !r.ok).map(r => r.p.id as string);
+  if (badEmails.length > 0) {
+    await db.from("outbound_prospects").update({ status: "do_not_contact" }).in("id", badEmails);
+    console.warn(`Domain validation failed for ${badEmails.length} prospects — marked do_not_contact`);
+  }
+  // Named addresses (rick@company.com) before role addresses (info@company.com)
+  // Named emails get ~3x higher open rates on cold outreach
+  const validProspects = mxChecked
+    .filter(r => r.ok)
+    .map(r => r.p)
+    .sort((a, b) => {
+      const aRole = isRoleAddress(a.email as string);
+      const bRole = isRoleAddress(b.email as string);
+      if (aRole && !bRole) return 1;
+      if (!aRole && bRole) return -1;
+      return 0;
+    });
+
   const client = getClient();
   const model = (process.env.AI_MODEL || "llama-3.3-70b-versatile").trim();
   const results: { prospect: string; touch: number; success: boolean; error?: string }[] = [];
   let emailsSent = 0;
 
-  for (const prospect of prospects) {
+  for (const prospect of validProspects) {
     if (emailsSent >= RATE_LIMIT_PER_RUN) break;
 
     const touchCount = getTouchNumber(prospect as Record<string, unknown>);
@@ -235,11 +265,17 @@ export async function GET(req: NextRequest) {
 
     try {
       const systemPrompt = buildSystemPrompt(segmentType, touchNumber);
-      const userMsg = `Write ${touchNumber === 1 ? "a cold intro email" : `follow-up #${touchNumber} email`} to:\nName: ${prospect.name || "there"}\nCompany: ${prospect.company || prospect.name || "your company"}\nCity: ${prospect.city || "Colorado"}`;
+      const prospectName = prospect.name as string | null;
+      const prospectCompany = prospect.company as string | null;
+      const hasDistinctPerson = prospectName && prospectCompany && prospectName !== prospectCompany;
+      const contactLine = hasDistinctPerson
+        ? `First name: ${prospectName}\nCompany: ${prospectCompany}`
+        : `Company: ${prospectName || prospectCompany || "your company"}`;
+      const userMsg = `Write ${touchNumber === 1 ? "a cold intro email" : `follow-up #${touchNumber} email`} to:\n${contactLine}\nCity: ${prospect.city || "Colorado"}`;
 
       const completion = await client.chat.completions.create({
         model,
-        max_tokens: 300,
+        max_tokens: 3000,
         temperature: 0.7,
         messages: [
           { role: "system", content: systemPrompt },
@@ -263,7 +299,8 @@ export async function GET(req: NextRequest) {
       const sent = await sendEmail(
         prospect.email as string,
         subject,
-        `<div style="font-family:sans-serif;font-size:14px;line-height:1.6;white-space:pre-wrap;">${emailContent.body}</div>`
+        `<div style="font-family:sans-serif;font-size:14px;line-height:1.6;white-space:pre-wrap;">${emailContent.body}</div>`,
+        "Anna"
       );
       if (!sent) throw new Error("sendEmail returned false — check FROM_EMAIL and Resend logs");
       emailsSent++;

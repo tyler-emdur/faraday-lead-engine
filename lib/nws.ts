@@ -67,7 +67,7 @@ export function parseHailSize(text: string): { text: string; inches: number } {
   for (const [pattern, inches] of HAIL_SIZE_WORDS) {
     if (pattern.test(lower)) {
       const match = lower.match(pattern);
-      return { text: match ? match[0] : "hail", inches };
+      return { text: match ? `${match[0]}-sized hail` : "hail", inches };
     }
   }
 
